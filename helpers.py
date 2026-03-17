@@ -31,9 +31,19 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 import lakefs
+from lakefs.exceptions import BadRequestException
 import matplotlib
-matplotlib.use("Agg")  # non-interactive backend -- safe in notebooks and CI
+
+try:
+    from IPython.core.getipython import get_ipython
+except Exception:  # pragma: no cover - defensive import fallback
+    get_ipython = None
+
+if get_ipython is None or get_ipython() is None:
+    matplotlib.use("Agg")  # non-interactive backend for scripts/CI only
+
 import matplotlib.pyplot as plt
+from matplotlib.figure import Figure
 import pandas as pd
 import seaborn as sns
 
@@ -138,8 +148,11 @@ def read_parquet(
     ref = repo.branch(branch_name)
     obj = ref.object(path)
 
+    raw_content: bytes | str = b""
     with obj.reader(mode="rb") as reader:
-        raw_bytes = reader.read()
+        raw_content = reader.read()
+
+    raw_bytes = raw_content if isinstance(raw_content, bytes) else raw_content.encode()
 
     df = pd.read_parquet(io.BytesIO(raw_bytes))
 
@@ -187,7 +200,20 @@ def lakefs_commit(
 
     repo = lakefs.Repository(repo_name, client=client)
     branch = repo.branch(branch_name)
-    ref = branch.commit(message=message, metadata=metadata)
+    commit_kwargs: Dict[str, Any] = {"message": message}
+    if metadata is not None:
+        commit_kwargs["metadata"] = metadata
+    try:
+        ref = branch.commit(**commit_kwargs)
+    except BadRequestException as exc:
+        if "no changes" in str(exc).lower():
+            LOGGER.debug(
+                "lakefs_commit: no changes to commit on %s/%s",
+                repo_name,
+                branch_name,
+            )
+            return None
+        raise
 
     LOGGER.debug(
         "lakefs_commit: commit ref=%s on branch %s",
@@ -244,12 +270,341 @@ def create_branch(
 
 
 # ---------------------------------------------------------------------------
+# Phase 2 data prep helpers
+# ---------------------------------------------------------------------------
+
+
+def filter_to_year(
+    df: pd.DataFrame,
+    year: int,
+    year_column: str = "year",
+) -> pd.DataFrame:
+    """Return only rows where *year_column* equals *year*.
+
+    Parameters
+    ----------
+    df:
+        Input DataFrame.
+    year:
+        Year value to keep (e.g. ``2023``).
+    year_column:
+        Name of the column containing year values.
+    """
+    LOGGER.debug(
+        "filter_to_year: filtering %d rows where %s == %s",
+        len(df),
+        year_column,
+        year,
+    )
+    filtered = df.loc[df[year_column] == year].copy()
+    LOGGER.debug("filter_to_year: retained %d rows", len(filtered))
+    return filtered
+
+
+def add_delay_precursor(
+    df: pd.DataFrame,
+    arrival_delay_col: str = "arrival_delay",
+    threshold_minutes: float = 15.0,
+    output_col: str = "is_delayed_pre",
+) -> pd.DataFrame:
+    """Add a binary delay precursor column derived from arrival delay.
+
+    The output is ``1`` when ``arrival_delay_col > threshold_minutes`` else
+    ``0``.
+    """
+    LOGGER.debug(
+        "add_delay_precursor: creating '%s' from '%s' with threshold=%s",
+        output_col,
+        arrival_delay_col,
+        threshold_minutes,
+    )
+    tagged = df.copy()
+    tagged[output_col] = (tagged[arrival_delay_col] > threshold_minutes).astype(int)
+    return tagged
+
+
+def stratified_sample_with_row_cap(
+    df: pd.DataFrame,
+    target_col: str,
+    row_cap: int,
+    random_seed: int = 42,
+) -> pd.DataFrame:
+    """Return a stratified sample capped at *row_cap* rows.
+
+    If the input already has ``<= row_cap`` rows, a copy is returned unchanged.
+    Sampling is proportional to class frequency in ``target_col`` while ensuring
+    the final sample size is exactly ``row_cap``.
+    """
+    if row_cap <= 0:
+        raise ValueError("row_cap must be a positive integer")
+
+    total_rows = len(df)
+    LOGGER.debug(
+        "stratified_sample_with_row_cap: input_rows=%d row_cap=%d target_col=%s",
+        total_rows,
+        row_cap,
+        target_col,
+    )
+
+    if total_rows <= row_cap:
+        LOGGER.debug(
+            "stratified_sample_with_row_cap: input below cap, returning copy"
+        )
+        return df.copy()
+
+    proportions = df[target_col].value_counts(normalize=True)
+    desired_counts = (proportions * row_cap).round().astype(int)
+
+    diff = row_cap - int(desired_counts.sum())
+    if diff != 0:
+        remainders = (proportions * row_cap) - (proportions * row_cap).round()
+        adjust_order = remainders.sort_values(ascending=(diff < 0)).index.tolist()
+        idx = 0
+        while diff != 0 and adjust_order:
+            label = adjust_order[idx % len(adjust_order)]
+            candidate = desired_counts.loc[label] + (1 if diff > 0 else -1)
+            if candidate >= 0:
+                desired_counts.loc[label] = candidate
+                diff += -1 if diff > 0 else 1
+            idx += 1
+
+    sampled_parts = []
+    for label, count in desired_counts.items():
+        class_rows = df[df[target_col] == label]
+        take = min(count, len(class_rows))
+        if take > 0:
+            sampled_parts.append(class_rows.sample(n=take, random_state=random_seed))
+
+    sampled = pd.concat(sampled_parts, axis=0)
+
+    if len(sampled) < row_cap:
+        remaining = df.drop(sampled.index)
+        needed = row_cap - len(sampled)
+        sampled = pd.concat(
+            [sampled, remaining.sample(n=needed, random_state=random_seed)],
+            axis=0,
+        )
+
+    sampled = sampled.sample(frac=1.0, random_state=random_seed).reset_index(drop=True)
+    LOGGER.debug("stratified_sample_with_row_cap: sampled_rows=%d", len(sampled))
+    return sampled
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 silver cleaning helpers
+# ---------------------------------------------------------------------------
+
+
+def drop_cancelled_flights(
+    df: pd.DataFrame,
+    cancelled_col: str = "CANCELLED",
+) -> pd.DataFrame:
+    """Drop flights marked as cancelled (cancelled_col == 1)."""
+    cleaned = df.loc[df[cancelled_col] != 1].copy()
+    LOGGER.debug(
+        "drop_cancelled_flights: removed=%d remaining=%d",
+        len(df) - len(cleaned),
+        len(cleaned),
+    )
+    return cleaned
+
+
+def drop_missing_arrival_delay(
+    df: pd.DataFrame,
+    arrival_delay_col: str = "arrival_delay",
+) -> pd.DataFrame:
+    """Drop rows where arrival delay is missing."""
+    cleaned = df.dropna(subset=[arrival_delay_col]).copy()
+    LOGGER.debug(
+        "drop_missing_arrival_delay: removed=%d remaining=%d",
+        len(df) - len(cleaned),
+        len(cleaned),
+    )
+    return cleaned
+
+
+def remove_negative_air_time(
+    df: pd.DataFrame,
+    air_time_col: str = "AIR_TIME",
+) -> pd.DataFrame:
+    """Drop rows with negative air time values."""
+    cleaned = df.loc[df[air_time_col] >= 0].copy()
+    LOGGER.debug(
+        "remove_negative_air_time: removed=%d remaining=%d",
+        len(df) - len(cleaned),
+        len(cleaned),
+    )
+    return cleaned
+
+
+def handle_remaining_missing_values(
+    df: pd.DataFrame,
+    drop_columns: Optional[list[str]] = None,
+    impute_numeric_columns: Optional[list[str]] = None,
+) -> tuple[pd.DataFrame, Dict[str, Any]]:
+    """Apply explicit missing-value policy for silver cleaning.
+
+    Policy:
+    - Drop rows with missing values in required columns (*drop_columns*).
+    - Median-impute missing values in optional numeric columns
+      (*impute_numeric_columns*).
+
+    Returns the cleaned DataFrame and an audit dictionary with per-column
+    dropped/imputed counts.
+    """
+    required_drop_cols = drop_columns or [
+        "FL_DATE",
+        "AIRLINE_CODE",
+        "ORIGIN",
+        "DEST",
+        "DISTANCE",
+        "AIR_TIME",
+    ]
+    optional_impute_cols = impute_numeric_columns or ["DEP_DELAY", "TAXI_OUT", "TAXI_IN"]
+
+    cleaned = df.copy()
+    audit: Dict[str, Any] = {
+        "rows_before": len(df),
+        "rows_after": len(df),
+        "drop": {},
+        "impute": {},
+    }
+
+    for col in required_drop_cols:
+        if col not in cleaned.columns:
+            continue
+        rows_before = len(cleaned)
+        cleaned = cleaned.dropna(subset=[col]).copy()
+        dropped = rows_before - len(cleaned)
+        audit["drop"][col] = dropped
+        LOGGER.debug(
+            "handle_remaining_missing_values: dropped %d rows for missing %s",
+            dropped,
+            col,
+        )
+
+    for col in optional_impute_cols:
+        if col not in cleaned.columns:
+            continue
+        coerced = pd.to_numeric(cleaned[col], errors="coerce")
+        missing_before = int(coerced.isna().sum())
+        fill_value = float(coerced.median()) if not pd.isna(coerced.median()) else 0.0
+        cleaned[col] = coerced.fillna(fill_value)
+        missing_after = int(cleaned[col].isna().sum())
+        imputed = missing_before - missing_after
+        audit["impute"][col] = {
+            "imputed": imputed,
+            "fill_value": fill_value,
+        }
+        LOGGER.debug(
+            "handle_remaining_missing_values: imputed %d values in %s with median=%s",
+            imputed,
+            col,
+            fill_value,
+        )
+
+    audit["rows_after"] = len(cleaned)
+    audit["rows_removed_total"] = audit["rows_before"] - audit["rows_after"]
+    LOGGER.debug(
+        "handle_remaining_missing_values: rows_before=%d rows_after=%d",
+        audit["rows_before"],
+        audit["rows_after"],
+    )
+    return cleaned, audit
+
+
+def normalize_silver_dtypes(
+    df: pd.DataFrame,
+    datetime_columns: Optional[list[str]] = None,
+    categorical_columns: Optional[list[str]] = None,
+    numeric_columns: Optional[list[str]] = None,
+) -> tuple[pd.DataFrame, Dict[str, Any]]:
+    """Normalize date/time, categorical, and numeric dtypes for silver data."""
+    dt_cols = datetime_columns or ["FL_DATE"]
+    cat_cols = categorical_columns or ["AIRLINE_CODE", "ORIGIN", "DEST"]
+    num_cols = numeric_columns or [
+        "DISTANCE",
+        "AIR_TIME",
+        "DEP_DELAY",
+        "TAXI_OUT",
+        "TAXI_IN",
+        "arrival_delay",
+    ]
+
+    normalized = df.copy()
+    audit: Dict[str, Any] = {"datetime": {}, "categorical": {}, "numeric": {}}
+
+    for col in dt_cols:
+        if col not in normalized.columns:
+            continue
+        before_na = int(normalized[col].isna().sum())
+        normalized[col] = pd.to_datetime(normalized[col], errors="coerce")
+        after_na = int(normalized[col].isna().sum())
+        coerced_to_na = max(after_na - before_na, 0)
+        audit["datetime"][col] = {"coerced_to_na": coerced_to_na}
+        LOGGER.debug(
+            "normalize_silver_dtypes: datetime %s coerced_to_na=%d",
+            col,
+            coerced_to_na,
+        )
+
+    for col in cat_cols:
+        if col not in normalized.columns:
+            continue
+        normalized[col] = normalized[col].astype("category")
+        audit["categorical"][col] = {
+            "categories": int(normalized[col].nunique(dropna=True)),
+        }
+        LOGGER.debug(
+            "normalize_silver_dtypes: categorical %s categories=%d",
+            col,
+            audit["categorical"][col]["categories"],
+        )
+
+    for col in num_cols:
+        if col not in normalized.columns:
+            continue
+        before_na = int(normalized[col].isna().sum())
+        normalized[col] = pd.to_numeric(normalized[col], errors="coerce")
+        after_na = int(normalized[col].isna().sum())
+        coerced_to_na = max(after_na - before_na, 0)
+        audit["numeric"][col] = {"coerced_to_na": coerced_to_na}
+        LOGGER.debug(
+            "normalize_silver_dtypes: numeric %s coerced_to_na=%d",
+            col,
+            coerced_to_na,
+        )
+
+    return normalized, audit
+
+
+def create_is_delayed_target(
+    df: pd.DataFrame,
+    arrival_delay_col: str = "arrival_delay",
+    threshold_minutes: float = 15.0,
+    output_col: str = "is_delayed",
+) -> pd.DataFrame:
+    """Create binary target where delay > threshold is 1 else 0."""
+    with_target = df.copy()
+    with_target[output_col] = (
+        with_target[arrival_delay_col] > threshold_minutes
+    ).astype(int)
+    LOGGER.debug(
+        "create_is_delayed_target: output_col=%s delayed_count=%d total=%d",
+        output_col,
+        with_target[output_col].sum(),
+        len(with_target),
+    )
+    return with_target
+
+
+# ---------------------------------------------------------------------------
 # Chart helpers
 # ---------------------------------------------------------------------------
 
 
 def save_chart(
-    fig: plt.Figure,
+    fig: Figure,
     filename: str,
     dpi: int = _DEFAULT_DPI,
     chart_dir: Optional[str] = None,

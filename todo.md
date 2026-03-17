@@ -22,31 +22,31 @@
 - [x] Run integration tests — confirm they pass against live lakeFS
 
 ## Phase 2 - Bronze Ingestion + EDA in Notebook 01
-- [ ] Write failing tests for filtering and sampling logic (year filtering, stratified sampling, row cap)
-- [ ] Load and filter raw data for 2023
-- [ ] Create delay target precursor (`arrival_delay > 15`) and apply stratified sampling if needed
-- [ ] Run tests — confirm filtering and sampling tests pass
-- [ ] Write bronze parquet to `bronze/flights_2023.parquet` on `main`
-- [ ] Commit bronze state in lakeFS: `Ingest raw 2023 flight data (bronze layer)`
-- [ ] Generate EDA statistics (total rows/columns, class balance, missing-value summary)
-- [ ] Generate EDA charts: delay histogram + 15-min threshold line
-- [ ] Generate EDA charts: delay by airline bar chart
-- [ ] Generate EDA charts: top delayed routes horizontal bar chart
-- [ ] Save all chart images to `outputs/charts/` at `dpi=150`
+- [x] Write failing tests for filtering and sampling logic (year filtering, stratified sampling, row cap)
+- [x] Load and filter raw data for 2023
+- [x] Create delay target precursor (`arrival_delay > 15`) and apply stratified sampling if needed
+- [x] Run tests — confirm filtering and sampling tests pass
+- [x] Write bronze parquet to `bronze/flights_2023.parquet` on `main`
+- [x] Commit bronze state in lakeFS: `Ingest raw 2023 flight data (bronze layer)`
+- [x] Generate EDA statistics (total rows/columns, class balance, missing-value summary)
+- [x] Generate EDA charts: delay histogram + 15-min threshold line
+- [x] Generate EDA charts: delay by airline bar chart
+- [x] Generate EDA charts: top delayed routes horizontal bar chart
+- [x] Save all chart images to `outputs/charts/` at `dpi=150`
 
 ## Phase 3 - Silver Cleaning in Notebook 01
-- [ ] Write failing tests for cleaning rules and target creation (drop canceled, remove missing arrival delay, remove negative air time, `is_delayed` computation)
-- [ ] Create `silver` branch from `main`
-- [ ] Load bronze data from lakeFS
-- [ ] Drop canceled flights
-- [ ] Remove rows with missing arrival delay
-- [ ] Handle remaining missing values (drop/imputation policy)
-- [ ] Remove erroneous rows (e.g., negative air time)
-- [ ] Normalize data types (date/time/categorical)
-- [ ] Create target column: `is_delayed = 1 if arrival_delay > 15 else 0`
-- [ ] Run tests — confirm cleaning and target tests pass
-- [ ] Write `silver/flights_2023_clean.parquet` and commit: `Clean flight data, create delay target (silver layer)`
-- [ ] Print cleaning audit summary (rows removed by rule + final shape)
+- [x] Write failing tests for cleaning rules and target creation (drop canceled, remove missing arrival delay, remove negative air time, `is_delayed` computation)
+- [x] Create `silver` branch from `main`
+- [x] Load bronze data from lakeFS
+- [x] Drop canceled flights
+- [x] Remove rows with missing arrival delay
+- [x] Handle remaining missing values (drop/imputation policy)
+- [x] Remove erroneous rows (e.g., negative air time)
+- [x] Normalize data types (date/time/categorical)
+- [x] Create target column: `is_delayed = 1 if arrival_delay > 15 else 0`
+- [x] Run tests — confirm cleaning and target tests pass
+- [x] Write `silver/flights_2023_clean.parquet` and commit: `Clean flight data, create delay target (silver layer)`
+- [x] Print cleaning audit summary (rows removed by rule + final shape)
 
 ## Phase 4 - Notebook 02 Scaffold + Shared Modeling Utilities
 - [ ] Create `02_experiments.ipynb` skeleton with sections 2.1–2.4
