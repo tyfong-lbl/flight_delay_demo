@@ -12,14 +12,14 @@
 - [x] Record row/column preview and schema snapshot
 
 ## Phase 1 - Notebook 01 Scaffold + lakeFS Connectivity
-- [ ] Create `01_data_prep.ipynb` skeleton with sections 1.1–1.4
-- [ ] Add configuration cell (lakeFS endpoint/credentials, repo name, paths, sample size cap, random seed)
-- [ ] Initialize lakeFS client and verify repository connection
-- [ ] Write failing unit tests in `tests/test_helpers.py` (parquet round-trip, commit wrapper, branch creation, chart save)
-- [ ] Create `helpers.py` with lakeFS helpers (read/write parquet, commit wrapper, branch creation) and chart helpers (save figure with consistent style, `dpi=150`)
-- [ ] Run unit tests — confirm they pass
-- [ ] Write integration tests in `tests/test_lakefs_integration.py` (create temp repo, write/read parquet, create branch, commit, verify log, cleanup)
-- [ ] Run integration tests — confirm they pass against live lakeFS
+- [x] Create `01_data_prep.ipynb` skeleton with sections 1.1–1.4
+- [x] Add configuration cell (lakeFS endpoint/credentials, repo name, paths, sample size cap, random seed)
+- [x] Initialize lakeFS client and verify repository connection
+- [x] Write failing unit tests in `tests/test_helpers.py` (parquet round-trip, commit wrapper, branch creation, chart save)
+- [x] Create `helpers.py` with lakeFS helpers (read/write parquet, commit wrapper, branch creation) and chart helpers (save figure with consistent style, `dpi=150`)
+- [x] Run unit tests — confirm they pass
+- [x] Write integration tests in `tests/test_lakefs_integration.py` (create temp repo, write/read parquet, create branch, commit, verify log, cleanup)
+- [x] Run integration tests — confirm they pass against live lakeFS
 
 ## Phase 2 - Bronze Ingestion + EDA in Notebook 01
 - [ ] Write failing tests for filtering and sampling logic (year filtering, stratified sampling, row cap)
