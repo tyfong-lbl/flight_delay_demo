@@ -66,6 +66,53 @@ class NotebookPhase1Tests(unittest.TestCase):
         )
 
 
+class NotebookPhase4Tests(unittest.TestCase):
+    def test_notebook_02_has_required_phase4_sections(self) -> None:
+        with open("02_experiments.ipynb", "r", encoding="utf-8") as notebook_file:
+            notebook = json.load(notebook_file)
+
+        markdown_cells = [
+            "".join(cell.get("source", []))
+            for cell in notebook.get("cells", [])
+            if cell.get("cell_type") == "markdown"
+        ]
+
+        expected_headers = [
+            "## Section 2.1 - Setup",
+            "## Section 2.2 - Experiment A: Time-Based Features",
+            "## Section 2.3 - Experiment B: Route-Based Features",
+            "## Section 2.4 - Comparison & Merge",
+        ]
+        for header in expected_headers:
+            self.assertTrue(
+                any(header in cell_text for cell_text in markdown_cells),
+                msg=f"Missing markdown section header: {header}",
+            )
+
+    def test_notebook_02_setup_cell_loads_silver_data(self) -> None:
+        with open("02_experiments.ipynb", "r", encoding="utf-8") as notebook_file:
+            notebook = json.load(notebook_file)
+
+        code_cells = [
+            "".join(cell.get("source", []))
+            for cell in notebook.get("cells", [])
+            if cell.get("cell_type") == "code"
+        ]
+
+        self.assertTrue(
+            any("build_notebook_config" in source for source in code_cells),
+            msg="Notebook 02 is missing config builder usage",
+        )
+        self.assertTrue(
+            any("initialize_lakefs_repository" in source for source in code_cells),
+            msg="Notebook 02 is missing lakeFS initialization",
+        )
+        self.assertTrue(
+            any("silver/flights_2023_clean.parquet" in source for source in code_cells),
+            msg="Notebook 02 should load silver dataset path",
+        )
+
+
 class StripApiSuffixTests(unittest.TestCase):
     def test_strips_api_v1(self) -> None:
         self.assertEqual(
