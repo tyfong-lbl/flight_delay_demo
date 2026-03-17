@@ -3,13 +3,13 @@
 ## Phase 0 - Environment + Data Acquisition
 - [x] Create `.venv` and install dependencies from `requirements.txt`
 - [x] Validate imports for all required packages
-- [ ] Configure Kaggle API access (ensure `kaggle.json` credentials and permissions)
-- [ ] Run credential check command to confirm API access
-- [ ] Download dataset files into `data/raw/`
-- [ ] Record local metadata note: dataset URL, download date/time, expected files
-- [ ] Extract archive if needed
-- [ ] Verify 2023 source file exists and can be loaded
-- [ ] Record row/column preview and schema snapshot
+- [x] Configure Kaggle API access (ensure `kaggle.json` credentials and permissions)
+- [x] Run credential check command to confirm API access
+- [x] Download dataset files into `data/raw/`
+- [x] Record local metadata note: dataset URL, download date/time, expected files
+- [x] Extract archive if needed
+- [x] Verify 2023 source file exists and can be loaded
+- [x] Record row/column preview and schema snapshot
 
 ## Phase 1 - Notebook 01 Scaffold + lakeFS Connectivity
 - [ ] Create `01_data_prep.ipynb` skeleton with sections 1.1–1.4
