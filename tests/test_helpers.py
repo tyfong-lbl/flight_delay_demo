@@ -327,6 +327,80 @@ class TestCreateBranch:
 
 
 # ---------------------------------------------------------------------------
+# Phase 2 TDD tests (expected to fail before implementation)
+# ---------------------------------------------------------------------------
+
+class TestPhase2FilteringAndSampling:
+    """Define expected behavior for year filtering and stratified sampling."""
+
+    def test_filter_to_year_keeps_only_2023_rows(self):
+        from helpers import filter_to_year
+
+        flights = pd.DataFrame(
+            {
+                "flight_id": [1, 2, 3, 4],
+                "year": [2022, 2023, 2024, 2023],
+                "arrival_delay": [10.0, 20.0, 5.0, -3.0],
+            }
+        )
+
+        filtered = filter_to_year(flights, year=2023, year_column="year")
+
+        assert set(filtered["year"].unique()) == {2023}
+        assert filtered["flight_id"].tolist() == [2, 4]
+
+    def test_stratified_sampling_preserves_class_balance_within_tolerance(self):
+        from helpers import add_delay_precursor, stratified_sample_with_row_cap
+
+        rng = np.random.default_rng(42)
+        flights = pd.DataFrame(
+            {
+                "flight_id": np.arange(10_000),
+                "year": np.full(10_000, 2023),
+                "arrival_delay": np.where(
+                    rng.random(10_000) < 0.3,
+                    30.0,
+                    0.0,
+                ),
+            }
+        )
+
+        tagged = add_delay_precursor(flights, arrival_delay_col="arrival_delay")
+        sampled = stratified_sample_with_row_cap(
+            tagged,
+            target_col="is_delayed_pre",
+            row_cap=2_000,
+            random_seed=42,
+        )
+
+        source_ratio = tagged["is_delayed_pre"].mean()
+        sampled_ratio = sampled["is_delayed_pre"].mean()
+
+        assert abs(sampled_ratio - source_ratio) <= 0.02
+
+    def test_sampling_respects_row_cap(self):
+        from helpers import add_delay_precursor, stratified_sample_with_row_cap
+
+        flights = pd.DataFrame(
+            {
+                "flight_id": np.arange(4_000),
+                "year": np.full(4_000, 2023),
+                "arrival_delay": np.where(np.arange(4_000) % 4 == 0, 40.0, 0.0),
+            }
+        )
+
+        tagged = add_delay_precursor(flights, arrival_delay_col="arrival_delay")
+        sampled = stratified_sample_with_row_cap(
+            tagged,
+            target_col="is_delayed_pre",
+            row_cap=500,
+            random_seed=7,
+        )
+
+        assert len(sampled) == 500
+
+
+# ---------------------------------------------------------------------------
 # Chart helper tests (filesystem-based)
 # ---------------------------------------------------------------------------
 

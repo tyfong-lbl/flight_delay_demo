@@ -217,6 +217,23 @@ class NotebookSetupUnitTests(unittest.TestCase):
         self.assertEqual(config.sample_size_cap, 500_000)
         self.assertEqual(config.random_seed, 123)
 
+    def test_build_notebook_config_uses_local_storage_default(self) -> None:
+        """When storage namespace is unset, default to local://<repo_name>."""
+        with patch.dict(
+            os.environ,
+            {
+                "LAKEFS_ENDPOINT": "http://lakefs.local:8000",
+                "LAKEFS_ACCESS_KEY": "key",
+                "LAKEFS_SECRET_KEY": "secret",
+                "LAKEFS_REPO": "repo-y",
+            },
+            clear=True,
+        ):
+            config = build_notebook_config(lakectl_config_path=self._NO_YAML)
+
+        self.assertEqual(config.repo_name, "repo-y")
+        self.assertEqual(config.storage_namespace, "local://repo-y")
+
     @patch("notebook_setup.importlib.import_module")
     def test_initialize_lakefs_repository_with_creation(self, import_module_mock: MagicMock) -> None:
         fake_lakefs = MagicMock()

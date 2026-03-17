@@ -22,17 +22,17 @@
 - [x] Run integration tests — confirm they pass against live lakeFS
 
 ## Phase 2 - Bronze Ingestion + EDA in Notebook 01
-- [ ] Write failing tests for filtering and sampling logic (year filtering, stratified sampling, row cap)
-- [ ] Load and filter raw data for 2023
-- [ ] Create delay target precursor (`arrival_delay > 15`) and apply stratified sampling if needed
-- [ ] Run tests — confirm filtering and sampling tests pass
-- [ ] Write bronze parquet to `bronze/flights_2023.parquet` on `main`
-- [ ] Commit bronze state in lakeFS: `Ingest raw 2023 flight data (bronze layer)`
-- [ ] Generate EDA statistics (total rows/columns, class balance, missing-value summary)
-- [ ] Generate EDA charts: delay histogram + 15-min threshold line
-- [ ] Generate EDA charts: delay by airline bar chart
-- [ ] Generate EDA charts: top delayed routes horizontal bar chart
-- [ ] Save all chart images to `outputs/charts/` at `dpi=150`
+- [x] Write failing tests for filtering and sampling logic (year filtering, stratified sampling, row cap)
+- [x] Load and filter raw data for 2023
+- [x] Create delay target precursor (`arrival_delay > 15`) and apply stratified sampling if needed
+- [x] Run tests — confirm filtering and sampling tests pass
+- [x] Write bronze parquet to `bronze/flights_2023.parquet` on `main`
+- [x] Commit bronze state in lakeFS: `Ingest raw 2023 flight data (bronze layer)`
+- [x] Generate EDA statistics (total rows/columns, class balance, missing-value summary)
+- [x] Generate EDA charts: delay histogram + 15-min threshold line
+- [x] Generate EDA charts: delay by airline bar chart
+- [x] Generate EDA charts: top delayed routes horizontal bar chart
+- [x] Save all chart images to `outputs/charts/` at `dpi=150`
 
 ## Phase 3 - Silver Cleaning in Notebook 01
 - [ ] Write failing tests for cleaning rules and target creation (drop canceled, remove missing arrival delay, remove negative air time, `is_delayed` computation)

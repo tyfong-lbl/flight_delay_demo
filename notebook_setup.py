@@ -7,6 +7,9 @@ and predictable behavior in local/demo environments.
 Credentials and endpoint are read from the lakectl CLI config file
 (``~/.config/lakefs/lakectl.yaml``) by default, with environment-variable
 overrides still supported.
+
+If ``LAKEFS_STORAGE_NAMESPACE`` is not provided, a local default is derived as
+``local://<repo_name>`` so repository creation can proceed in notebook flows.
 """
 
 from __future__ import annotations
@@ -185,12 +188,15 @@ def build_notebook_config(
     assert isinstance(access_key, str)
     assert isinstance(secret_key, str)
 
+    repo_name = os.getenv("LAKEFS_REPO", "flight-delay-demo")
+    storage_namespace = os.getenv("LAKEFS_STORAGE_NAMESPACE") or f"local://{repo_name}"
+
     config = NotebookConfig(
         endpoint=endpoint,
         access_key=access_key,
         secret_key=secret_key,
-        repo_name=os.getenv("LAKEFS_REPO", "flight-delay-demo"),
-        storage_namespace=os.getenv("LAKEFS_STORAGE_NAMESPACE", ""),
+        repo_name=repo_name,
+        storage_namespace=storage_namespace,
         raw_csv_path=os.getenv("RAW_CSV_PATH", "data/raw/flights_sample_3m.csv"),
         sample_size_cap=_parse_int_env("SAMPLE_SIZE_CAP", 500_000),
         random_seed=_parse_int_env("RANDOM_SEED", 42),
@@ -235,26 +241,20 @@ def initialize_lakefs_repository(config: NotebookConfig) -> LakeFSInitResult:
     repository = lakefs_module.Repository(config.repo_name, client=client)
     repository_created = False
 
-    if config.storage_namespace:
-        LOGGER.debug(
-            "Ensuring repository exists",
-            extra={
-                "repo_name": config.repo_name,
-                "storage_namespace": config.storage_namespace,
-                "default_branch": config.default_branch,
-            },
-        )
-        repository.create(
-            storage_namespace=config.storage_namespace,
-            default_branch=config.default_branch,
-            exist_ok=True,
-        )
-        repository_created = True
-    else:
-        LOGGER.debug(
-            "Storage namespace missing; skipping repository creation",
-            extra={"repo_name": config.repo_name},
-        )
+    LOGGER.debug(
+        "Ensuring repository exists",
+        extra={
+            "repo_name": config.repo_name,
+            "storage_namespace": config.storage_namespace,
+            "default_branch": config.default_branch,
+        },
+    )
+    repository.create(
+        storage_namespace=config.storage_namespace,
+        default_branch=config.default_branch,
+        exist_ok=True,
+    )
+    repository_created = True
 
     branches = list(repository.branches())
     branch_ids = {branch.id for branch in branches}

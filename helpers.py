@@ -31,9 +31,19 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 import lakefs
+from lakefs.exceptions import BadRequestException
 import matplotlib
-matplotlib.use("Agg")  # non-interactive backend -- safe in notebooks and CI
+
+try:
+    from IPython.core.getipython import get_ipython
+except Exception:  # pragma: no cover - defensive import fallback
+    get_ipython = None
+
+if get_ipython is None or get_ipython() is None:
+    matplotlib.use("Agg")  # non-interactive backend for scripts/CI only
+
 import matplotlib.pyplot as plt
+from matplotlib.figure import Figure
 import pandas as pd
 import seaborn as sns
 
@@ -138,8 +148,11 @@ def read_parquet(
     ref = repo.branch(branch_name)
     obj = ref.object(path)
 
+    raw_content: bytes | str = b""
     with obj.reader(mode="rb") as reader:
-        raw_bytes = reader.read()
+        raw_content = reader.read()
+
+    raw_bytes = raw_content if isinstance(raw_content, bytes) else raw_content.encode()
 
     df = pd.read_parquet(io.BytesIO(raw_bytes))
 
@@ -187,7 +200,20 @@ def lakefs_commit(
 
     repo = lakefs.Repository(repo_name, client=client)
     branch = repo.branch(branch_name)
-    ref = branch.commit(message=message, metadata=metadata)
+    commit_kwargs: Dict[str, Any] = {"message": message}
+    if metadata is not None:
+        commit_kwargs["metadata"] = metadata
+    try:
+        ref = branch.commit(**commit_kwargs)
+    except BadRequestException as exc:
+        if "no changes" in str(exc).lower():
+            LOGGER.debug(
+                "lakefs_commit: no changes to commit on %s/%s",
+                repo_name,
+                branch_name,
+            )
+            return None
+        raise
 
     LOGGER.debug(
         "lakefs_commit: commit ref=%s on branch %s",
@@ -244,12 +270,133 @@ def create_branch(
 
 
 # ---------------------------------------------------------------------------
+# Phase 2 data prep helpers
+# ---------------------------------------------------------------------------
+
+
+def filter_to_year(
+    df: pd.DataFrame,
+    year: int,
+    year_column: str = "year",
+) -> pd.DataFrame:
+    """Return only rows where *year_column* equals *year*.
+
+    Parameters
+    ----------
+    df:
+        Input DataFrame.
+    year:
+        Year value to keep (e.g. ``2023``).
+    year_column:
+        Name of the column containing year values.
+    """
+    LOGGER.debug(
+        "filter_to_year: filtering %d rows where %s == %s",
+        len(df),
+        year_column,
+        year,
+    )
+    filtered = df.loc[df[year_column] == year].copy()
+    LOGGER.debug("filter_to_year: retained %d rows", len(filtered))
+    return filtered
+
+
+def add_delay_precursor(
+    df: pd.DataFrame,
+    arrival_delay_col: str = "arrival_delay",
+    threshold_minutes: float = 15.0,
+    output_col: str = "is_delayed_pre",
+) -> pd.DataFrame:
+    """Add a binary delay precursor column derived from arrival delay.
+
+    The output is ``1`` when ``arrival_delay_col > threshold_minutes`` else
+    ``0``.
+    """
+    LOGGER.debug(
+        "add_delay_precursor: creating '%s' from '%s' with threshold=%s",
+        output_col,
+        arrival_delay_col,
+        threshold_minutes,
+    )
+    tagged = df.copy()
+    tagged[output_col] = (tagged[arrival_delay_col] > threshold_minutes).astype(int)
+    return tagged
+
+
+def stratified_sample_with_row_cap(
+    df: pd.DataFrame,
+    target_col: str,
+    row_cap: int,
+    random_seed: int = 42,
+) -> pd.DataFrame:
+    """Return a stratified sample capped at *row_cap* rows.
+
+    If the input already has ``<= row_cap`` rows, a copy is returned unchanged.
+    Sampling is proportional to class frequency in ``target_col`` while ensuring
+    the final sample size is exactly ``row_cap``.
+    """
+    if row_cap <= 0:
+        raise ValueError("row_cap must be a positive integer")
+
+    total_rows = len(df)
+    LOGGER.debug(
+        "stratified_sample_with_row_cap: input_rows=%d row_cap=%d target_col=%s",
+        total_rows,
+        row_cap,
+        target_col,
+    )
+
+    if total_rows <= row_cap:
+        LOGGER.debug(
+            "stratified_sample_with_row_cap: input below cap, returning copy"
+        )
+        return df.copy()
+
+    proportions = df[target_col].value_counts(normalize=True)
+    desired_counts = (proportions * row_cap).round().astype(int)
+
+    diff = row_cap - int(desired_counts.sum())
+    if diff != 0:
+        remainders = (proportions * row_cap) - (proportions * row_cap).round()
+        adjust_order = remainders.sort_values(ascending=(diff < 0)).index.tolist()
+        idx = 0
+        while diff != 0 and adjust_order:
+            label = adjust_order[idx % len(adjust_order)]
+            candidate = desired_counts.loc[label] + (1 if diff > 0 else -1)
+            if candidate >= 0:
+                desired_counts.loc[label] = candidate
+                diff += -1 if diff > 0 else 1
+            idx += 1
+
+    sampled_parts = []
+    for label, count in desired_counts.items():
+        class_rows = df[df[target_col] == label]
+        take = min(count, len(class_rows))
+        if take > 0:
+            sampled_parts.append(class_rows.sample(n=take, random_state=random_seed))
+
+    sampled = pd.concat(sampled_parts, axis=0)
+
+    if len(sampled) < row_cap:
+        remaining = df.drop(sampled.index)
+        needed = row_cap - len(sampled)
+        sampled = pd.concat(
+            [sampled, remaining.sample(n=needed, random_state=random_seed)],
+            axis=0,
+        )
+
+    sampled = sampled.sample(frac=1.0, random_state=random_seed).reset_index(drop=True)
+    LOGGER.debug("stratified_sample_with_row_cap: sampled_rows=%d", len(sampled))
+    return sampled
+
+
+# ---------------------------------------------------------------------------
 # Chart helpers
 # ---------------------------------------------------------------------------
 
 
 def save_chart(
-    fig: plt.Figure,
+    fig: Figure,
     filename: str,
     dpi: int = _DEFAULT_DPI,
     chart_dir: Optional[str] = None,
