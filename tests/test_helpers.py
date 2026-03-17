@@ -401,6 +401,161 @@ class TestPhase2FilteringAndSampling:
 
 
 # ---------------------------------------------------------------------------
+# Phase 3 TDD tests (expected to fail before implementation)
+# ---------------------------------------------------------------------------
+
+
+class TestPhase3SilverCleaning:
+    """Define expected cleaning and target creation behavior for silver layer."""
+
+    def test_drop_cancelled_flights(self):
+        from helpers import drop_cancelled_flights
+
+        flights = pd.DataFrame(
+            {
+                "flight_id": [1, 2, 3, 4],
+                "CANCELLED": [0.0, 1.0, 0.0, 1.0],
+            }
+        )
+
+        cleaned = drop_cancelled_flights(flights, cancelled_col="CANCELLED")
+
+        assert cleaned["flight_id"].tolist() == [1, 3]
+        assert (cleaned["CANCELLED"] == 0.0).all()
+
+    def test_drop_missing_arrival_delay(self):
+        from helpers import drop_missing_arrival_delay
+
+        flights = pd.DataFrame(
+            {
+                "flight_id": [10, 20, 30],
+                "arrival_delay": [5.0, np.nan, 18.0],
+            }
+        )
+
+        cleaned = drop_missing_arrival_delay(flights, arrival_delay_col="arrival_delay")
+
+        assert cleaned["flight_id"].tolist() == [10, 30]
+        assert cleaned["arrival_delay"].isna().sum() == 0
+
+    def test_remove_negative_air_time(self):
+        from helpers import remove_negative_air_time
+
+        flights = pd.DataFrame(
+            {
+                "flight_id": [1, 2, 3],
+                "AIR_TIME": [100.0, -5.0, 45.0],
+            }
+        )
+
+        cleaned = remove_negative_air_time(flights, air_time_col="AIR_TIME")
+
+        assert cleaned["flight_id"].tolist() == [1, 3]
+        assert (cleaned["AIR_TIME"] >= 0).all()
+
+    def test_create_is_delayed_target_uses_15_min_threshold(self):
+        from helpers import create_is_delayed_target
+
+        flights = pd.DataFrame(
+            {
+                "flight_id": [1, 2, 3, 4],
+                "arrival_delay": [15.0, 15.01, 0.0, 120.0],
+            }
+        )
+
+        with_target = create_is_delayed_target(
+            flights,
+            arrival_delay_col="arrival_delay",
+            threshold_minutes=15.0,
+            output_col="is_delayed",
+        )
+
+        assert with_target["is_delayed"].tolist() == [0, 1, 0, 1]
+
+
+class TestPhase3MissingValuesAndDtypes:
+    """Define explicit missing-value policy and dtype normalization behavior."""
+
+    def test_handle_remaining_missing_values_drops_required_and_imputes_optional(self):
+        from helpers import handle_remaining_missing_values
+
+        flights = pd.DataFrame(
+            {
+                "flight_id": [1, 2, 3, 4],
+                "FL_DATE": ["2023-01-01", "2023-01-02", None, "2023-01-04"],
+                "AIRLINE_CODE": ["AA", "UA", "DL", "WN"],
+                "ORIGIN": ["SFO", "LAX", "JFK", "SEA"],
+                "DEST": ["LAX", "SFO", "SEA", "JFK"],
+                "DISTANCE": [337.0, 337.0, 2421.0, 954.0],
+                "AIR_TIME": [62.0, 60.0, 320.0, 120.0],
+                "DEP_DELAY": [10.0, np.nan, 5.0, np.nan],
+            }
+        )
+
+        cleaned, audit = handle_remaining_missing_values(
+            flights,
+            drop_columns=["FL_DATE"],
+            impute_numeric_columns=["DEP_DELAY"],
+        )
+
+        assert cleaned["flight_id"].tolist() == [1, 2, 4]
+        assert cleaned["DEP_DELAY"].isna().sum() == 0
+        assert audit["drop"]["FL_DATE"] == 1
+        assert audit["impute"]["DEP_DELAY"]["imputed"] == 2
+        assert audit["rows_removed_total"] == 1
+
+    def test_handle_remaining_missing_values_audit_uses_zero_when_median_nan(self):
+        from helpers import handle_remaining_missing_values
+
+        flights = pd.DataFrame(
+            {
+                "flight_id": [1, 2],
+                "FL_DATE": ["2023-01-01", "2023-01-02"],
+                "DEP_DELAY": [np.nan, np.nan],
+            }
+        )
+
+        cleaned, audit = handle_remaining_missing_values(
+            flights,
+            drop_columns=["FL_DATE"],
+            impute_numeric_columns=["DEP_DELAY"],
+        )
+
+        assert cleaned["DEP_DELAY"].tolist() == [0.0, 0.0]
+        assert audit["impute"]["DEP_DELAY"]["fill_value"] == 0.0
+
+    def test_normalize_silver_dtypes_converts_datetime_categorical_numeric(self):
+        from helpers import normalize_silver_dtypes
+
+        flights = pd.DataFrame(
+            {
+                "FL_DATE": ["2023-01-01", "not-a-date"],
+                "AIRLINE_CODE": ["AA", "UA"],
+                "ORIGIN": ["SFO", "LAX"],
+                "DEST": ["SEA", "JFK"],
+                "DISTANCE": ["337", "bad-number"],
+                "arrival_delay": ["5", "16"],
+            }
+        )
+
+        normalized, audit = normalize_silver_dtypes(
+            flights,
+            datetime_columns=["FL_DATE"],
+            categorical_columns=["AIRLINE_CODE", "ORIGIN", "DEST"],
+            numeric_columns=["DISTANCE", "arrival_delay"],
+        )
+
+        assert pd.api.types.is_datetime64_any_dtype(normalized["FL_DATE"])
+        assert pd.api.types.is_categorical_dtype(normalized["AIRLINE_CODE"])
+        assert pd.api.types.is_categorical_dtype(normalized["ORIGIN"])
+        assert pd.api.types.is_categorical_dtype(normalized["DEST"])
+        assert pd.api.types.is_numeric_dtype(normalized["DISTANCE"])
+        assert pd.api.types.is_numeric_dtype(normalized["arrival_delay"])
+        assert audit["datetime"]["FL_DATE"]["coerced_to_na"] == 1
+        assert audit["numeric"]["DISTANCE"]["coerced_to_na"] == 1
+
+
+# ---------------------------------------------------------------------------
 # Chart helper tests (filesystem-based)
 # ---------------------------------------------------------------------------
 

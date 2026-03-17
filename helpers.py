@@ -391,6 +391,214 @@ def stratified_sample_with_row_cap(
 
 
 # ---------------------------------------------------------------------------
+# Phase 3 silver cleaning helpers
+# ---------------------------------------------------------------------------
+
+
+def drop_cancelled_flights(
+    df: pd.DataFrame,
+    cancelled_col: str = "CANCELLED",
+) -> pd.DataFrame:
+    """Drop flights marked as cancelled (cancelled_col == 1)."""
+    cleaned = df.loc[df[cancelled_col] != 1].copy()
+    LOGGER.debug(
+        "drop_cancelled_flights: removed=%d remaining=%d",
+        len(df) - len(cleaned),
+        len(cleaned),
+    )
+    return cleaned
+
+
+def drop_missing_arrival_delay(
+    df: pd.DataFrame,
+    arrival_delay_col: str = "arrival_delay",
+) -> pd.DataFrame:
+    """Drop rows where arrival delay is missing."""
+    cleaned = df.dropna(subset=[arrival_delay_col]).copy()
+    LOGGER.debug(
+        "drop_missing_arrival_delay: removed=%d remaining=%d",
+        len(df) - len(cleaned),
+        len(cleaned),
+    )
+    return cleaned
+
+
+def remove_negative_air_time(
+    df: pd.DataFrame,
+    air_time_col: str = "AIR_TIME",
+) -> pd.DataFrame:
+    """Drop rows with negative air time values."""
+    cleaned = df.loc[df[air_time_col] >= 0].copy()
+    LOGGER.debug(
+        "remove_negative_air_time: removed=%d remaining=%d",
+        len(df) - len(cleaned),
+        len(cleaned),
+    )
+    return cleaned
+
+
+def handle_remaining_missing_values(
+    df: pd.DataFrame,
+    drop_columns: Optional[list[str]] = None,
+    impute_numeric_columns: Optional[list[str]] = None,
+) -> tuple[pd.DataFrame, Dict[str, Any]]:
+    """Apply explicit missing-value policy for silver cleaning.
+
+    Policy:
+    - Drop rows with missing values in required columns (*drop_columns*).
+    - Median-impute missing values in optional numeric columns
+      (*impute_numeric_columns*).
+
+    Returns the cleaned DataFrame and an audit dictionary with per-column
+    dropped/imputed counts.
+    """
+    required_drop_cols = drop_columns or [
+        "FL_DATE",
+        "AIRLINE_CODE",
+        "ORIGIN",
+        "DEST",
+        "DISTANCE",
+        "AIR_TIME",
+    ]
+    optional_impute_cols = impute_numeric_columns or ["DEP_DELAY", "TAXI_OUT", "TAXI_IN"]
+
+    cleaned = df.copy()
+    audit: Dict[str, Any] = {
+        "rows_before": len(df),
+        "rows_after": len(df),
+        "drop": {},
+        "impute": {},
+    }
+
+    for col in required_drop_cols:
+        if col not in cleaned.columns:
+            continue
+        rows_before = len(cleaned)
+        cleaned = cleaned.dropna(subset=[col]).copy()
+        dropped = rows_before - len(cleaned)
+        audit["drop"][col] = dropped
+        LOGGER.debug(
+            "handle_remaining_missing_values: dropped %d rows for missing %s",
+            dropped,
+            col,
+        )
+
+    for col in optional_impute_cols:
+        if col not in cleaned.columns:
+            continue
+        coerced = pd.to_numeric(cleaned[col], errors="coerce")
+        missing_before = int(coerced.isna().sum())
+        fill_value = float(coerced.median()) if not pd.isna(coerced.median()) else 0.0
+        cleaned[col] = coerced.fillna(fill_value)
+        missing_after = int(cleaned[col].isna().sum())
+        imputed = missing_before - missing_after
+        audit["impute"][col] = {
+            "imputed": imputed,
+            "fill_value": fill_value,
+        }
+        LOGGER.debug(
+            "handle_remaining_missing_values: imputed %d values in %s with median=%s",
+            imputed,
+            col,
+            fill_value,
+        )
+
+    audit["rows_after"] = len(cleaned)
+    audit["rows_removed_total"] = audit["rows_before"] - audit["rows_after"]
+    LOGGER.debug(
+        "handle_remaining_missing_values: rows_before=%d rows_after=%d",
+        audit["rows_before"],
+        audit["rows_after"],
+    )
+    return cleaned, audit
+
+
+def normalize_silver_dtypes(
+    df: pd.DataFrame,
+    datetime_columns: Optional[list[str]] = None,
+    categorical_columns: Optional[list[str]] = None,
+    numeric_columns: Optional[list[str]] = None,
+) -> tuple[pd.DataFrame, Dict[str, Any]]:
+    """Normalize date/time, categorical, and numeric dtypes for silver data."""
+    dt_cols = datetime_columns or ["FL_DATE"]
+    cat_cols = categorical_columns or ["AIRLINE_CODE", "ORIGIN", "DEST"]
+    num_cols = numeric_columns or [
+        "DISTANCE",
+        "AIR_TIME",
+        "DEP_DELAY",
+        "TAXI_OUT",
+        "TAXI_IN",
+        "arrival_delay",
+    ]
+
+    normalized = df.copy()
+    audit: Dict[str, Any] = {"datetime": {}, "categorical": {}, "numeric": {}}
+
+    for col in dt_cols:
+        if col not in normalized.columns:
+            continue
+        before_na = int(normalized[col].isna().sum())
+        normalized[col] = pd.to_datetime(normalized[col], errors="coerce")
+        after_na = int(normalized[col].isna().sum())
+        coerced_to_na = max(after_na - before_na, 0)
+        audit["datetime"][col] = {"coerced_to_na": coerced_to_na}
+        LOGGER.debug(
+            "normalize_silver_dtypes: datetime %s coerced_to_na=%d",
+            col,
+            coerced_to_na,
+        )
+
+    for col in cat_cols:
+        if col not in normalized.columns:
+            continue
+        normalized[col] = normalized[col].astype("category")
+        audit["categorical"][col] = {
+            "categories": int(normalized[col].nunique(dropna=True)),
+        }
+        LOGGER.debug(
+            "normalize_silver_dtypes: categorical %s categories=%d",
+            col,
+            audit["categorical"][col]["categories"],
+        )
+
+    for col in num_cols:
+        if col not in normalized.columns:
+            continue
+        before_na = int(normalized[col].isna().sum())
+        normalized[col] = pd.to_numeric(normalized[col], errors="coerce")
+        after_na = int(normalized[col].isna().sum())
+        coerced_to_na = max(after_na - before_na, 0)
+        audit["numeric"][col] = {"coerced_to_na": coerced_to_na}
+        LOGGER.debug(
+            "normalize_silver_dtypes: numeric %s coerced_to_na=%d",
+            col,
+            coerced_to_na,
+        )
+
+    return normalized, audit
+
+
+def create_is_delayed_target(
+    df: pd.DataFrame,
+    arrival_delay_col: str = "arrival_delay",
+    threshold_minutes: float = 15.0,
+    output_col: str = "is_delayed",
+) -> pd.DataFrame:
+    """Create binary target where delay > threshold is 1 else 0."""
+    with_target = df.copy()
+    with_target[output_col] = (
+        with_target[arrival_delay_col] > threshold_minutes
+    ).astype(int)
+    LOGGER.debug(
+        "create_is_delayed_target: output_col=%s delayed_count=%d total=%d",
+        output_col,
+        with_target[output_col].sum(),
+        len(with_target),
+    )
+    return with_target
+
+
+# ---------------------------------------------------------------------------
 # Chart helpers
 # ---------------------------------------------------------------------------
 

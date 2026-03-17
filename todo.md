@@ -35,18 +35,18 @@
 - [x] Save all chart images to `outputs/charts/` at `dpi=150`
 
 ## Phase 3 - Silver Cleaning in Notebook 01
-- [ ] Write failing tests for cleaning rules and target creation (drop canceled, remove missing arrival delay, remove negative air time, `is_delayed` computation)
-- [ ] Create `silver` branch from `main`
-- [ ] Load bronze data from lakeFS
-- [ ] Drop canceled flights
-- [ ] Remove rows with missing arrival delay
-- [ ] Handle remaining missing values (drop/imputation policy)
-- [ ] Remove erroneous rows (e.g., negative air time)
-- [ ] Normalize data types (date/time/categorical)
-- [ ] Create target column: `is_delayed = 1 if arrival_delay > 15 else 0`
-- [ ] Run tests — confirm cleaning and target tests pass
-- [ ] Write `silver/flights_2023_clean.parquet` and commit: `Clean flight data, create delay target (silver layer)`
-- [ ] Print cleaning audit summary (rows removed by rule + final shape)
+- [x] Write failing tests for cleaning rules and target creation (drop canceled, remove missing arrival delay, remove negative air time, `is_delayed` computation)
+- [x] Create `silver` branch from `main`
+- [x] Load bronze data from lakeFS
+- [x] Drop canceled flights
+- [x] Remove rows with missing arrival delay
+- [x] Handle remaining missing values (drop/imputation policy)
+- [x] Remove erroneous rows (e.g., negative air time)
+- [x] Normalize data types (date/time/categorical)
+- [x] Create target column: `is_delayed = 1 if arrival_delay > 15 else 0`
+- [x] Run tests — confirm cleaning and target tests pass
+- [x] Write `silver/flights_2023_clean.parquet` and commit: `Clean flight data, create delay target (silver layer)`
+- [x] Print cleaning audit summary (rows removed by rule + final shape)
 
 ## Phase 4 - Notebook 02 Scaffold + Shared Modeling Utilities
 - [ ] Create `02_experiments.ipynb` skeleton with sections 2.1–2.4
