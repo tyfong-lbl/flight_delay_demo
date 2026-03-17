@@ -56,18 +56,18 @@
 - [x] Run tests — confirm modeling utility tests pass
 
 ## Phase 5 - Experiment A (Time Features)
-- [ ] Write failing tests for time-based feature engineering (`hour_of_day`, `day_of_week`, `month`, `is_weekend`, `is_holiday_period`, `time_of_day_bucket`)
-- [ ] Create branch `experiment-time-features` from `silver`
-- [ ] Engineer time-based features
-- [ ] Run tests — confirm time feature tests pass
-- [ ] Apply label encoding for required categoricals
-- [ ] Build feature set and split data (time features + `airline`, `origin`, `distance`)
-- [ ] Write `gold/features_time.parquet` and commit: `Gold layer: time-based features`
-- [ ] Train XGBoost and evaluate model
-- [ ] Generate visuals: confusion matrix, PR curve, top-15 feature importance
-- [ ] Write `gold/metrics_time.json` and `gold/predictions_time.parquet`
-- [ ] Save charts to `outputs/charts/`
-- [ ] Commit: `Train XGBoost on time-based features, save metrics`
+- [x] Write failing tests for time-based feature engineering (`hour_of_day`, `day_of_week`, `month`, `is_weekend`, `is_holiday_period`, `time_of_day_bucket`)
+- [x] Create branch `experiment-time-features` from `silver`
+- [x] Engineer time-based features
+- [x] Run tests — confirm time feature tests pass
+- [x] Apply label encoding for required categoricals
+- [x] Build feature set and split data (time features + `airline`, `origin`, `distance`)
+- [x] Write `gold/features_time.parquet` and commit: `Gold layer: time-based features`
+- [x] Train XGBoost and evaluate model
+- [x] Generate visuals: confusion matrix, PR curve, top-15 feature importance
+- [x] Write `gold/metrics_time.json` and `gold/predictions_time.parquet`
+- [x] Save charts to `outputs/charts/`
+- [x] Commit: `Train XGBoost on time-based features, save metrics`
 
 ## Phase 6 - Experiment B (Route Features + Frequency Encoding)
 - [ ] Write failing tests for route feature engineering (frequency encoding, delay-rate computation from train split only, fallback for unseen categories)

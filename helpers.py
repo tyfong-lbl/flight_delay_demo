@@ -611,6 +611,258 @@ def create_is_delayed_target(
 
 
 # ---------------------------------------------------------------------------
+# Phase 5: Time-based feature engineering
+# ---------------------------------------------------------------------------
+
+
+import numpy as np
+
+
+def engineer_time_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Engineer time-based features for Experiment A.
+
+    Extracts temporal signals from ``FL_DATE`` and ``DEP_TIME`` columns.
+    All new columns are appended to a copy of *df*; the original is not
+    mutated.
+
+    New columns created:
+    - ``hour_of_day``: departure hour (0-23); -1 sentinel for missing DEP_TIME
+    - ``day_of_week``: Monday=0 .. Sunday=6
+    - ``month``: 1-12
+    - ``is_weekend``: 1 for Saturday/Sunday, 0 otherwise
+    - ``is_holiday_period``: 1 if the date falls in a high-travel period
+    - ``time_of_day_bucket``: categorical bucket based on hour
+
+    Parameters
+    ----------
+    df:
+        Silver-layer DataFrame with ``FL_DATE`` (datetime) and ``DEP_TIME``
+        (float, HHMM format) columns.
+
+    Returns
+    -------
+    pd.DataFrame
+        Copy of *df* with the six new feature columns appended.
+    """
+    result = df.copy()
+
+    # --- hour_of_day ---
+    dep = result["DEP_TIME"].copy()
+    # Handle 2400 -> 0
+    dep = dep.where(dep != 2400, 0)
+    # Extract hour: integer division by 100
+    hour = (dep // 100).astype("Int64")  # nullable int to preserve NaN
+    # Convert to regular int with -1 sentinel for NaN
+    result["hour_of_day"] = hour.fillna(-1).astype(int)
+    LOGGER.debug(
+        "engineer_time_features: hour_of_day computed, NaN count=%d",
+        dep.isna().sum(),
+    )
+
+    # --- day_of_week, month ---
+    result["day_of_week"] = result["FL_DATE"].dt.dayofweek
+    result["month"] = result["FL_DATE"].dt.month
+
+    # --- is_weekend ---
+    result["is_weekend"] = (result["day_of_week"] >= 5).astype(int)
+
+    # --- is_holiday_period ---
+    # Holiday windows: Dec 20 - Jan 3, Jun 15 - Sep 5, Nov 20 - Nov 30
+    month_col = result["FL_DATE"].dt.month
+    day_col = result["FL_DATE"].dt.day
+    is_holiday = (
+        # Dec 20 - Dec 31
+        ((month_col == 12) & (day_col >= 20))
+        # Jan 1 - Jan 3
+        | ((month_col == 1) & (day_col <= 3))
+        # Jun 15 - Jun 30
+        | ((month_col == 6) & (day_col >= 15))
+        # Jul - Aug (full months)
+        | (month_col == 7)
+        | (month_col == 8)
+        # Sep 1 - Sep 5
+        | ((month_col == 9) & (day_col <= 5))
+        # Nov 20 - Nov 30 (Thanksgiving)
+        | ((month_col == 11) & (day_col >= 20))
+    )
+    result["is_holiday_period"] = is_holiday.astype(int)
+    LOGGER.debug(
+        "engineer_time_features: is_holiday_period sum=%d / %d",
+        result["is_holiday_period"].sum(),
+        len(result),
+    )
+
+    # --- time_of_day_bucket ---
+    # early_morning: 5-8, morning: 9-11, afternoon: 12-17,
+    # evening: 18-21, night: 22-4, unknown: -1
+    def _hour_to_bucket(h: int) -> str:
+        if h == -1:
+            return "unknown"
+        if 5 <= h <= 8:
+            return "early_morning"
+        if 9 <= h <= 11:
+            return "morning"
+        if 12 <= h <= 17:
+            return "afternoon"
+        if 18 <= h <= 21:
+            return "evening"
+        return "night"  # 22-23, 0-4
+
+    result["time_of_day_bucket"] = result["hour_of_day"].apply(_hour_to_bucket)
+    LOGGER.debug(
+        "engineer_time_features: bucket distribution: %s",
+        result["time_of_day_bucket"].value_counts().to_dict(),
+    )
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Phase 6: Route-based feature engineering
+# ---------------------------------------------------------------------------
+
+
+def engineer_route_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Engineer route/geography features for Experiment B.
+
+    Creates composite route identifier and distance buckets from the silver
+    dataset.  All new columns are appended to a copy of *df*.
+
+    New columns:
+    - ``route``: ``ORIGIN-DEST`` string
+    - ``distance_bucket``: categorical (short / medium / long / very_long)
+
+    Parameters
+    ----------
+    df:
+        Silver-layer DataFrame with ``ORIGIN``, ``DEST``, ``DISTANCE``.
+
+    Returns
+    -------
+    pd.DataFrame
+        Copy of *df* with route feature columns appended.
+    """
+    result = df.copy()
+
+    # --- route ---
+    result["route"] = result["ORIGIN"].astype(str) + "-" + result["DEST"].astype(str)
+    LOGGER.debug(
+        "engineer_route_features: unique routes=%d", result["route"].nunique()
+    )
+
+    # --- distance_bucket ---
+    # short: <750, medium: 750-1500, long: 1500-2500, very_long: >2500
+    bins = [0, 750, 1500, 2500, float("inf")]
+    labels = ["short", "medium", "long", "very_long"]
+    result["distance_bucket"] = pd.cut(
+        result["DISTANCE"], bins=bins, labels=labels, right=False
+    ).astype(str)
+    LOGGER.debug(
+        "engineer_route_features: distance_bucket distribution: %s",
+        result["distance_bucket"].value_counts().to_dict(),
+    )
+
+    return result
+
+
+def frequency_encode(
+    train_series: pd.Series, test_series: pd.Series
+) -> tuple[pd.Series, pd.Series]:
+    """Frequency-encode a categorical column using train-set proportions.
+
+    Unseen categories in the test set receive ``0.0``.
+
+    Parameters
+    ----------
+    train_series:
+        Categorical values from the training split.
+    test_series:
+        Categorical values from the test split.
+
+    Returns
+    -------
+    tuple[pd.Series, pd.Series]
+        (train_encoded, test_encoded) with frequency proportions.
+    """
+    freq_map = train_series.value_counts(normalize=True)
+    train_enc = train_series.map(freq_map).astype(float)
+    test_enc = test_series.map(freq_map).fillna(0.0).astype(float)
+    LOGGER.debug(
+        "frequency_encode: unique_train=%d unique_test=%d unseen_test=%d",
+        train_series.nunique(),
+        test_series.nunique(),
+        (test_enc == 0.0).sum(),
+    )
+    return train_enc, test_enc
+
+
+def compute_delay_rates(
+    train_df: pd.DataFrame,
+    group_col: str,
+    target_col: str = "is_delayed",
+) -> Dict[str, float]:
+    """Compute delay rate per group using the training split only.
+
+    This function is **leakage-safe**: it only uses training data to build
+    the rate mapping.
+
+    Parameters
+    ----------
+    train_df:
+        Training-split DataFrame.
+    group_col:
+        Column name to group by (e.g. ``"AIRLINE_CODE"``).
+    target_col:
+        Binary target column.
+
+    Returns
+    -------
+    dict
+        Mapping from group value to delay rate (float 0-1).
+    """
+    rates = train_df.groupby(group_col)[target_col].mean().to_dict()
+    LOGGER.debug("compute_delay_rates: group_col=%s groups=%d", group_col, len(rates))
+    return rates
+
+
+def apply_delay_rates(
+    df: pd.DataFrame,
+    rate_map: Dict[str, float],
+    col: str,
+    default_rate: float = 0.0,
+) -> pd.Series:
+    """Apply pre-computed delay rates to a DataFrame column.
+
+    Unseen categories receive *default_rate* as a safe fallback.
+
+    Parameters
+    ----------
+    df:
+        DataFrame with the categorical column.
+    rate_map:
+        Mapping from category value to delay rate.
+    col:
+        Column name to look up in *rate_map*.
+    default_rate:
+        Fallback value for categories not present in *rate_map*.
+
+    Returns
+    -------
+    pd.Series
+        Series of delay rates aligned with *df* index.
+    """
+    result = df[col].map(rate_map).fillna(default_rate).astype(float)
+    unseen = (df[col].map(rate_map).isna()).sum()
+    LOGGER.debug(
+        "apply_delay_rates: col=%s unseen_categories=%d default_rate=%.3f",
+        col,
+        unseen,
+        default_rate,
+    )
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Phase 4 modeling helpers
 # ---------------------------------------------------------------------------
 
