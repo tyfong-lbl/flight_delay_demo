@@ -37,8 +37,10 @@ import matplotlib
 
 try:
     from IPython.core.getipython import get_ipython
+    from IPython.display import display as _ipython_display
 except Exception:  # pragma: no cover - defensive import fallback
     get_ipython = None
+    _ipython_display = None
 
 if get_ipython is None or get_ipython() is None:
     matplotlib.use("Agg")  # non-interactive backend for scripts/CI only
@@ -924,7 +926,7 @@ def temporal_train_test_split(
     df: pd.DataFrame,
     target_col: str,
     date_col: str = "FL_DATE",
-    cutoff_date: str = "2023-11-01",
+    cutoff_date: str = "2023-07-01",
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series]:
     """Split data temporally: train on dates before *cutoff_date*, test on dates at or after.
 
@@ -945,8 +947,8 @@ def temporal_train_test_split(
     cutoff_date:
         ISO-format date string.  Rows with ``date_col < cutoff_date`` go to
         train; rows with ``date_col >= cutoff_date`` go to test.
-        Default ``"2023-11-01"`` gives roughly 83/17 train/test for full-year
-        2023 data.
+        Default ``"2023-07-01"`` gives roughly 75/25 train/test for the
+        available 2023 data (Jan–Aug).
 
     Returns
     -------
@@ -1015,7 +1017,7 @@ def create_xgboost_classifier(
         max_depth=6,
         learning_rate=0.1,
         eval_metric="logloss",
-        use_label_encoder=False,
+        n_jobs=2,
         random_state=random_state,
     )
 
@@ -1207,7 +1209,17 @@ def merge_branch(
     repo = lakefs.Repository(repo_name, client=client)
     source = repo.branch(source_branch)
     dest = repo.branch(dest_branch)
-    ref = source.merge_into(dest, message=message)
+    try:
+        ref = source.merge_into(dest, message=message)
+    except BadRequestException as exc:
+        if "no changes" in str(exc).lower():
+            LOGGER.debug(
+                "merge_branch: no changes to merge from %s -> %s",
+                source_branch,
+                dest_branch,
+            )
+            return None
+        raise
     LOGGER.debug("merge_branch: merge complete ref=%s", ref)
     return ref
 
@@ -1272,6 +1284,8 @@ def plot_confusion_matrix(
     ax.set_ylabel("Actual")
     ax.set_title("Confusion Matrix")
     output_path = save_chart(fig, filename=filename, chart_dir=chart_dir)
+    if _ipython_display is not None:
+        _ipython_display(fig)
     plt.close(fig)
     LOGGER.debug("plot_confusion_matrix: saved to %s", output_path)
     return output_path
@@ -1300,6 +1314,8 @@ def plot_precision_recall_curve(
     ax.set_title("Precision-Recall Curve")
     ax.legend(loc="best")
     output_path = save_chart(fig, filename=filename, chart_dir=chart_dir)
+    if _ipython_display is not None:
+        _ipython_display(fig)
     plt.close(fig)
     LOGGER.debug("plot_precision_recall_curve: saved to %s", output_path)
     return output_path
@@ -1347,6 +1363,8 @@ def plot_pr_curve_overlay(
     ax.set_ylim([0.0, 1.05])
 
     output_path = save_chart(fig, filename=filename, chart_dir=chart_dir)
+    if _ipython_display is not None:
+        _ipython_display(fig)
     plt.close(fig)
     LOGGER.debug("plot_pr_curve_overlay: saved to %s", output_path)
     return output_path
@@ -1377,6 +1395,8 @@ def plot_feature_importance(
     ax.set_xlabel("Importance")
     ax.set_ylabel("Feature")
     output_path = save_chart(fig, filename=filename, chart_dir=chart_dir)
+    if _ipython_display is not None:
+        _ipython_display(fig)
     plt.close(fig)
     LOGGER.debug("plot_feature_importance: saved to %s", output_path)
     return output_path
