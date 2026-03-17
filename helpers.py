@@ -875,6 +875,11 @@ def deterministic_train_test_split(
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series]:
     """Create deterministic stratified train/test splits.
 
+    .. deprecated::
+        Use :func:`temporal_train_test_split` for experiment notebooks.
+        This function is retained for backward compatibility with tests and
+        any non-temporal splitting needs.
+
     Parameters
     ----------
     df:
@@ -911,6 +916,88 @@ def deterministic_train_test_split(
         "deterministic_train_test_split: train=%d test=%d",
         len(X_train),
         len(X_test),
+    )
+    return X_train, X_test, y_train, y_test
+
+
+def temporal_train_test_split(
+    df: pd.DataFrame,
+    target_col: str,
+    date_col: str = "FL_DATE",
+    cutoff_date: str = "2023-11-01",
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series]:
+    """Split data temporally: train on dates before *cutoff_date*, test on dates at or after.
+
+    This produces a realistic evaluation scenario where the model is trained on
+    historical data and tested on future, unseen time periods.  The split is
+    fully deterministic — the same cutoff always yields the same partition.
+
+    Parameters
+    ----------
+    df:
+        Input DataFrame containing features, the target column, and the date
+        column.
+    target_col:
+        Name of the binary target column (e.g. ``"is_delayed"``).
+    date_col:
+        Name of the datetime column used for the temporal boundary
+        (default ``"FL_DATE"``).
+    cutoff_date:
+        ISO-format date string.  Rows with ``date_col < cutoff_date`` go to
+        train; rows with ``date_col >= cutoff_date`` go to test.
+        Default ``"2023-11-01"`` gives roughly 83/17 train/test for full-year
+        2023 data.
+
+    Returns
+    -------
+    tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series]
+        ``(X_train, X_test, y_train, y_test)`` — features exclude both
+        *target_col* and *date_col* so they are model-ready.
+
+    Raises
+    ------
+    KeyError
+        If *target_col* or *date_col* is missing from *df*.
+    ValueError
+        If either the train or test partition is empty after splitting.
+    """
+    for col, label in [(target_col, "target_col"), (date_col, "date_col")]:
+        if col not in df.columns:
+            raise KeyError(f"{label} '{col}' not found in DataFrame")
+
+    cutoff = pd.Timestamp(cutoff_date)
+    dates = pd.to_datetime(df[date_col])
+
+    train_mask = dates < cutoff
+    test_mask = dates >= cutoff
+
+    if not train_mask.any():
+        raise ValueError(
+            f"No training rows before cutoff {cutoff_date}. "
+            "Check date_col values or choose an earlier cutoff."
+        )
+    if not test_mask.any():
+        raise ValueError(
+            f"No test rows at or after cutoff {cutoff_date}. "
+            "Check date_col values or choose a later cutoff."
+        )
+
+    drop_cols = [target_col, date_col]
+    X_train = df.loc[train_mask].drop(columns=drop_cols)
+    X_test = df.loc[test_mask].drop(columns=drop_cols)
+    y_train = df.loc[train_mask, target_col]
+    y_test = df.loc[test_mask, target_col]
+
+    LOGGER.debug(
+        "temporal_train_test_split: cutoff=%s train=%d (%.1f%%) test=%d (%.1f%%) "
+        "train_delay_rate=%.4f test_delay_rate=%.4f",
+        cutoff_date,
+        len(X_train),
+        100 * len(X_train) / len(df),
+        len(X_test),
+        100 * len(X_test) / len(df),
+        y_train.mean(),
+        y_test.mean(),
     )
     return X_train, X_test, y_train, y_test
 

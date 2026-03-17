@@ -658,6 +658,132 @@ class TestPhase4ModelingUtilities:
         pd.testing.assert_frame_equal(loaded, predictions)
 
 
+class TestTemporalTrainTestSplit:
+    """Verify temporal_train_test_split partitions by date cutoff."""
+
+    @pytest.fixture
+    def temporal_df(self):
+        """Synthetic DataFrame spanning Jan-Dec 2023."""
+        dates = pd.date_range("2023-01-01", "2023-12-31", freq="D")
+        rng = np.random.default_rng(42)
+        return pd.DataFrame(
+            {
+                "FL_DATE": dates,
+                "feature_a": rng.normal(size=len(dates)),
+                "feature_b": rng.integers(0, 10, size=len(dates)),
+                "is_delayed": rng.choice([0, 1], size=len(dates), p=[0.7, 0.3]),
+            }
+        )
+
+    def test_all_train_dates_before_cutoff(self, temporal_df):
+        from helpers import temporal_train_test_split
+
+        X_train, X_test, y_train, y_test = temporal_train_test_split(
+            temporal_df, target_col="is_delayed", cutoff_date="2023-11-01"
+        )
+        # Train dates should all be before cutoff
+        train_dates = temporal_df.loc[X_train.index, "FL_DATE"]
+        assert (train_dates < pd.Timestamp("2023-11-01")).all()
+
+    def test_all_test_dates_at_or_after_cutoff(self, temporal_df):
+        from helpers import temporal_train_test_split
+
+        X_train, X_test, y_train, y_test = temporal_train_test_split(
+            temporal_df, target_col="is_delayed", cutoff_date="2023-11-01"
+        )
+        test_dates = temporal_df.loc[X_test.index, "FL_DATE"]
+        assert (test_dates >= pd.Timestamp("2023-11-01")).all()
+
+    def test_both_splits_are_non_empty(self, temporal_df):
+        from helpers import temporal_train_test_split
+
+        X_train, X_test, y_train, y_test = temporal_train_test_split(
+            temporal_df, target_col="is_delayed", cutoff_date="2023-11-01"
+        )
+        assert len(X_train) > 0
+        assert len(X_test) > 0
+
+    def test_splits_cover_all_rows(self, temporal_df):
+        from helpers import temporal_train_test_split
+
+        X_train, X_test, y_train, y_test = temporal_train_test_split(
+            temporal_df, target_col="is_delayed", cutoff_date="2023-11-01"
+        )
+        assert len(X_train) + len(X_test) == len(temporal_df)
+
+    def test_date_col_and_target_col_excluded_from_features(self, temporal_df):
+        from helpers import temporal_train_test_split
+
+        X_train, X_test, _, _ = temporal_train_test_split(
+            temporal_df, target_col="is_delayed", cutoff_date="2023-11-01"
+        )
+        assert "FL_DATE" not in X_train.columns
+        assert "is_delayed" not in X_train.columns
+        assert "FL_DATE" not in X_test.columns
+        assert "is_delayed" not in X_test.columns
+
+    def test_raises_on_missing_target_col(self, temporal_df):
+        from helpers import temporal_train_test_split
+
+        with pytest.raises(KeyError, match="target_col"):
+            temporal_train_test_split(
+                temporal_df, target_col="nonexistent", cutoff_date="2023-11-01"
+            )
+
+    def test_raises_on_missing_date_col(self, temporal_df):
+        from helpers import temporal_train_test_split
+
+        with pytest.raises(KeyError, match="date_col"):
+            temporal_train_test_split(
+                temporal_df, target_col="is_delayed", date_col="MISSING",
+                cutoff_date="2023-11-01"
+            )
+
+    def test_raises_when_train_empty(self):
+        from helpers import temporal_train_test_split
+
+        df = pd.DataFrame(
+            {
+                "FL_DATE": pd.to_datetime(["2023-12-01", "2023-12-15"]),
+                "feature": [1, 2],
+                "is_delayed": [0, 1],
+            }
+        )
+        with pytest.raises(ValueError, match="No training rows"):
+            temporal_train_test_split(
+                df, target_col="is_delayed", cutoff_date="2023-01-01"
+            )
+
+    def test_raises_when_test_empty(self):
+        from helpers import temporal_train_test_split
+
+        df = pd.DataFrame(
+            {
+                "FL_DATE": pd.to_datetime(["2023-01-01", "2023-02-01"]),
+                "feature": [1, 2],
+                "is_delayed": [0, 1],
+            }
+        )
+        with pytest.raises(ValueError, match="No test rows"):
+            temporal_train_test_split(
+                df, target_col="is_delayed", cutoff_date="2024-01-01"
+            )
+
+    def test_deterministic_same_cutoff_same_result(self, temporal_df):
+        from helpers import temporal_train_test_split
+
+        r1 = temporal_train_test_split(
+            temporal_df, target_col="is_delayed", cutoff_date="2023-11-01"
+        )
+        r2 = temporal_train_test_split(
+            temporal_df, target_col="is_delayed", cutoff_date="2023-11-01"
+        )
+        pd.testing.assert_frame_equal(r1[0], r2[0])
+        pd.testing.assert_frame_equal(r1[1], r2[1])
+        pd.testing.assert_series_equal(r1[2], r2[2])
+        pd.testing.assert_series_equal(r1[3], r2[3])
+
+
 # ---------------------------------------------------------------------------
 # Chart helper tests (filesystem-based)
 # ---------------------------------------------------------------------------
