@@ -49,11 +49,11 @@
 - [x] Print cleaning audit summary (rows removed by rule + final shape)
 
 ## Phase 4 - Notebook 02 Scaffold + Shared Modeling Utilities
-- [ ] Create `02_experiments.ipynb` skeleton with sections 2.1–2.4
-- [ ] Connect to lakeFS and load silver dataset
-- [ ] Write failing tests for modeling utilities (train/test split stratification, metrics keys/values, metrics JSON round-trip, predictions parquet round-trip)
-- [ ] Add modeling utilities to `helpers.py` (deterministic split, XGBoost factory, metrics function, plotting functions, metrics/predictions save/load)
-- [ ] Run tests — confirm modeling utility tests pass
+- [x] Create `02_experiments.ipynb` skeleton with sections 2.1–2.4
+- [x] Connect to lakeFS and load silver dataset
+- [x] Write failing tests for modeling utilities (train/test split stratification, metrics keys/values, metrics JSON round-trip, predictions parquet round-trip)
+- [x] Add modeling utilities to `helpers.py` (deterministic split, XGBoost factory, metrics function, plotting functions, metrics/predictions save/load)
+- [x] Run tests — confirm modeling utility tests pass
 
 ## Phase 5 - Experiment A (Time Features)
 - [ ] Write failing tests for time-based feature engineering (`hour_of_day`, `day_of_week`, `month`, `is_weekend`, `is_holiday_period`, `time_of_day_bucket`)

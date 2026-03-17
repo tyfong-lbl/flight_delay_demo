@@ -25,6 +25,7 @@ Design principles
 from __future__ import annotations
 
 import io
+import json
 import logging
 import os
 from pathlib import Path
@@ -46,6 +47,17 @@ import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
 import pandas as pd
 import seaborn as sns
+from sklearn.metrics import (
+    accuracy_score,
+    auc,
+    confusion_matrix,
+    f1_score,
+    precision_recall_curve,
+    precision_score,
+    recall_score,
+)
+from sklearn.model_selection import train_test_split
+import xgboost as xgb
 
 LOGGER = logging.getLogger(__name__)
 
@@ -596,6 +608,228 @@ def create_is_delayed_target(
         len(with_target),
     )
     return with_target
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 modeling helpers
+# ---------------------------------------------------------------------------
+
+
+def deterministic_train_test_split(
+    df: pd.DataFrame,
+    target_col: str,
+    test_size: float = 0.2,
+    random_state: int = 42,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series]:
+    """Create deterministic stratified train/test splits.
+
+    Parameters
+    ----------
+    df:
+        Input feature/target DataFrame.
+    target_col:
+        Name of the binary target column.
+    test_size:
+        Fraction of rows assigned to the test split.
+    random_state:
+        Seed value for deterministic behavior.
+    """
+    if target_col not in df.columns:
+        raise KeyError(f"target_col '{target_col}' not found in DataFrame")
+
+    X = df.drop(columns=[target_col])
+    y = df[target_col]
+
+    LOGGER.debug(
+        "deterministic_train_test_split: rows=%d test_size=%.3f random_state=%d",
+        len(df),
+        test_size,
+        random_state,
+    )
+
+    X_train, X_test, y_train, y_test = train_test_split(
+        X,
+        y,
+        test_size=test_size,
+        random_state=random_state,
+        stratify=y,
+    )
+
+    LOGGER.debug(
+        "deterministic_train_test_split: train=%d test=%d",
+        len(X_train),
+        len(X_test),
+    )
+    return X_train, X_test, y_train, y_test
+
+
+def create_xgboost_classifier(
+    random_state: int = 42,
+) -> xgb.XGBClassifier:
+    """Build the fixed-hyperparameter XGBoost classifier for demo experiments."""
+    LOGGER.debug(
+        "create_xgboost_classifier: random_state=%d n_estimators=200 max_depth=6",
+        random_state,
+    )
+    return xgb.XGBClassifier(
+        n_estimators=200,
+        max_depth=6,
+        learning_rate=0.1,
+        eval_metric="logloss",
+        use_label_encoder=False,
+        random_state=random_state,
+    )
+
+
+def compute_binary_classification_metrics(
+    y_true: pd.Series | list[int],
+    y_pred: pd.Series | list[int],
+    y_scores: pd.Series | list[float],
+) -> Dict[str, float]:
+    """Compute core scalar metrics used for cross-experiment comparison."""
+    precision_vals, recall_vals, _ = precision_recall_curve(y_true, y_scores)
+    if len(recall_vals) > 1 and recall_vals[0] > recall_vals[-1]:
+        recall_for_auc = recall_vals[::-1]
+        precision_for_auc = precision_vals[::-1]
+    else:
+        recall_for_auc = recall_vals
+        precision_for_auc = precision_vals
+    auc_pr = auc(recall_for_auc, precision_for_auc)
+
+    metrics = {
+        "accuracy": float(accuracy_score(y_true, y_pred)),
+        "precision": float(precision_score(y_true, y_pred, zero_division=0)),
+        "recall": float(recall_score(y_true, y_pred, zero_division=0)),
+        "f1": float(f1_score(y_true, y_pred, zero_division=0)),
+        "auc_pr": float(auc_pr),
+    }
+    LOGGER.debug("compute_binary_classification_metrics: metrics=%s", metrics)
+    return metrics
+
+
+def save_metrics_json(metrics: Dict[str, float], output_path: str | Path) -> Path:
+    """Write metrics dictionary to JSON and return the resolved output path."""
+    target = Path(output_path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with target.open("w", encoding="utf-8") as fh:
+        json.dump(metrics, fh, indent=2, sort_keys=True)
+    LOGGER.debug("save_metrics_json: wrote metrics to %s", target)
+    return target
+
+
+def load_metrics_json(path: str | Path) -> Dict[str, float]:
+    """Load metrics dictionary from a JSON file."""
+    source = Path(path)
+    with source.open("r", encoding="utf-8") as fh:
+        payload = json.load(fh)
+    metrics = {str(key): float(value) for key, value in payload.items()}
+    LOGGER.debug("load_metrics_json: loaded metrics from %s", source)
+    return metrics
+
+
+def save_predictions_parquet(
+    predictions: pd.DataFrame,
+    output_path: str | Path,
+) -> Path:
+    """Persist predictions DataFrame to Parquet for downstream comparison plots."""
+    target = Path(output_path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    predictions.to_parquet(target, index=False)
+    LOGGER.debug(
+        "save_predictions_parquet: wrote %d rows to %s",
+        len(predictions),
+        target,
+    )
+    return target
+
+
+def load_predictions_parquet(path: str | Path) -> pd.DataFrame:
+    """Load predictions DataFrame previously saved via Parquet."""
+    source = Path(path)
+    df = pd.read_parquet(source)
+    LOGGER.debug(
+        "load_predictions_parquet: loaded shape=%s from %s",
+        df.shape,
+        source,
+    )
+    return df
+
+
+def plot_confusion_matrix(
+    y_true: pd.Series | list[int],
+    y_pred: pd.Series | list[int],
+    filename: str,
+    chart_dir: Optional[str] = None,
+) -> Path:
+    """Plot and save a confusion matrix heatmap as PNG."""
+    cm = confusion_matrix(y_true, y_pred)
+    fig, ax = plt.subplots(figsize=(6, 5))
+    sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", cbar=False, ax=ax)
+    ax.set_xlabel("Predicted")
+    ax.set_ylabel("Actual")
+    ax.set_title("Confusion Matrix")
+    output_path = save_chart(fig, filename=filename, chart_dir=chart_dir)
+    plt.close(fig)
+    LOGGER.debug("plot_confusion_matrix: saved to %s", output_path)
+    return output_path
+
+
+def plot_precision_recall_curve(
+    y_true: pd.Series | list[int],
+    y_scores: pd.Series | list[float],
+    filename: str,
+    chart_dir: Optional[str] = None,
+) -> Path:
+    """Plot and save precision-recall curve as PNG."""
+    precision_vals, recall_vals, _ = precision_recall_curve(y_true, y_scores)
+    if len(recall_vals) > 1 and recall_vals[0] > recall_vals[-1]:
+        recall_for_auc = recall_vals[::-1]
+        precision_for_auc = precision_vals[::-1]
+    else:
+        recall_for_auc = recall_vals
+        precision_for_auc = precision_vals
+    auc_pr = auc(recall_for_auc, precision_for_auc)
+
+    fig, ax = plt.subplots(figsize=(7, 5))
+    ax.plot(recall_vals, precision_vals, label=f"AUC-PR = {auc_pr:.3f}")
+    ax.set_xlabel("Recall")
+    ax.set_ylabel("Precision")
+    ax.set_title("Precision-Recall Curve")
+    ax.legend(loc="best")
+    output_path = save_chart(fig, filename=filename, chart_dir=chart_dir)
+    plt.close(fig)
+    LOGGER.debug("plot_precision_recall_curve: saved to %s", output_path)
+    return output_path
+
+
+def plot_feature_importance(
+    feature_names: list[str],
+    importance_values: list[float],
+    filename: str,
+    chart_dir: Optional[str] = None,
+    top_n: int = 15,
+) -> Path:
+    """Plot and save top-N feature importance bar chart."""
+    if len(feature_names) != len(importance_values):
+        raise ValueError("feature_names and importance_values must be same length")
+
+    importance_df = pd.DataFrame(
+        {
+            "feature": feature_names,
+            "importance": importance_values,
+        }
+    ).sort_values("importance", ascending=False)
+
+    top_df = importance_df.head(top_n).iloc[::-1]
+    fig, ax = plt.subplots(figsize=(8, 6))
+    sns.barplot(data=top_df, x="importance", y="feature", orient="h", ax=ax)
+    ax.set_title(f"Top {min(top_n, len(importance_df))} Feature Importance")
+    ax.set_xlabel("Importance")
+    ax.set_ylabel("Feature")
+    output_path = save_chart(fig, filename=filename, chart_dir=chart_dir)
+    plt.close(fig)
+    LOGGER.debug("plot_feature_importance: saved to %s", output_path)
+    return output_path
 
 
 # ---------------------------------------------------------------------------

@@ -556,6 +556,109 @@ class TestPhase3MissingValuesAndDtypes:
 
 
 # ---------------------------------------------------------------------------
+# Phase 4 TDD tests (expected to fail before implementation)
+# ---------------------------------------------------------------------------
+
+
+class TestPhase4ModelingUtilities:
+    """Define expected behavior for shared modeling utility helpers."""
+
+    def test_deterministic_train_test_split_is_stratified_and_reproducible(self):
+        from helpers import deterministic_train_test_split
+
+        rng = np.random.default_rng(42)
+        rows = 1_000
+        labels = np.where(rng.random(rows) < 0.35, 1, 0)
+        frame = pd.DataFrame(
+            {
+                "feature_a": rng.normal(size=rows),
+                "feature_b": rng.integers(0, 10, size=rows),
+                "is_delayed": labels,
+            }
+        )
+
+        split_one = deterministic_train_test_split(
+            frame,
+            target_col="is_delayed",
+            test_size=0.2,
+            random_state=42,
+        )
+        split_two = deterministic_train_test_split(
+            frame,
+            target_col="is_delayed",
+            test_size=0.2,
+            random_state=42,
+        )
+
+        X_train_1, X_test_1, y_train_1, y_test_1 = split_one
+        X_train_2, X_test_2, y_train_2, y_test_2 = split_two
+
+        assert len(X_train_1) == 800
+        assert len(X_test_1) == 200
+        pd.testing.assert_frame_equal(X_train_1, X_train_2)
+        pd.testing.assert_frame_equal(X_test_1, X_test_2)
+        pd.testing.assert_series_equal(y_train_1, y_train_2)
+        pd.testing.assert_series_equal(y_test_1, y_test_2)
+
+        source_rate = frame["is_delayed"].mean()
+        train_rate = y_train_1.mean()
+        test_rate = y_test_1.mean()
+        assert abs(train_rate - source_rate) <= 0.02
+        assert abs(test_rate - source_rate) <= 0.02
+
+    def test_compute_binary_classification_metrics_returns_expected_keys_and_values(self):
+        from helpers import compute_binary_classification_metrics
+
+        y_true = [0, 0, 1, 1]
+        y_pred = [0, 1, 0, 1]
+        y_scores = [0.1, 0.9, 0.2, 0.8]
+
+        metrics = compute_binary_classification_metrics(y_true, y_pred, y_scores)
+
+        assert set(metrics.keys()) == {"accuracy", "precision", "recall", "f1", "auc_pr"}
+        assert metrics["accuracy"] == pytest.approx(0.5)
+        assert metrics["precision"] == pytest.approx(0.5)
+        assert metrics["recall"] == pytest.approx(0.5)
+        assert metrics["f1"] == pytest.approx(0.5)
+        assert metrics["auc_pr"] == pytest.approx(0.4166666, abs=1e-6)
+
+    def test_metrics_json_round_trip(self, tmp_path):
+        from helpers import load_metrics_json, save_metrics_json
+
+        metrics = {
+            "accuracy": 0.8125,
+            "precision": 0.701,
+            "recall": 0.645,
+            "f1": 0.672,
+            "auc_pr": 0.755,
+        }
+        output = tmp_path / "gold" / "metrics_time.json"
+
+        save_metrics_json(metrics, output)
+        loaded = load_metrics_json(output)
+
+        assert output.exists()
+        assert loaded == metrics
+
+    def test_predictions_parquet_round_trip(self, tmp_path):
+        from helpers import load_predictions_parquet, save_predictions_parquet
+
+        predictions = pd.DataFrame(
+            {
+                "y_true": [0, 1, 0, 1],
+                "y_scores": [0.11, 0.83, 0.21, 0.92],
+            }
+        )
+        output = tmp_path / "gold" / "predictions_time.parquet"
+
+        save_predictions_parquet(predictions, output)
+        loaded = load_predictions_parquet(output)
+
+        assert output.exists()
+        pd.testing.assert_frame_equal(loaded, predictions)
+
+
+# ---------------------------------------------------------------------------
 # Chart helper tests (filesystem-based)
 # ---------------------------------------------------------------------------
 
