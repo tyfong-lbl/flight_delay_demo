@@ -1094,6 +1094,170 @@ def load_predictions_parquet(path: str | Path) -> pd.DataFrame:
     return df
 
 
+def load_metrics_from_lakefs(
+    client: Any,
+    repo_name: str,
+    branch_name: str,
+    path: str,
+) -> Dict[str, float]:
+    """Load a metrics JSON file from a lakeFS branch.
+
+    Parameters
+    ----------
+    client:
+        An initialised ``lakefs.Client`` instance.
+    repo_name:
+        Name of the lakeFS repository.
+    branch_name:
+        Branch (or ref) to read from.
+    path:
+        Object path (e.g. ``"gold/metrics_time.json"``).
+
+    Returns
+    -------
+    dict
+        Metrics dictionary.
+    """
+    repo = lakefs.Repository(repo_name, client=client)
+    obj = repo.branch(branch_name).object(path)
+    with obj.reader(mode="rb") as reader:
+        raw = reader.read()
+    raw_bytes = raw if isinstance(raw, bytes) else raw.encode()
+    payload = json.loads(raw_bytes)
+    metrics = {str(k): float(v) for k, v in payload.items()}
+    LOGGER.debug(
+        "load_metrics_from_lakefs: loaded %d metrics from %s/%s",
+        len(metrics),
+        branch_name,
+        path,
+    )
+    return metrics
+
+
+def load_predictions_from_lakefs(
+    client: Any,
+    repo_name: str,
+    branch_name: str,
+    path: str,
+) -> pd.DataFrame:
+    """Load a predictions parquet file from a lakeFS branch.
+
+    Parameters
+    ----------
+    client:
+        An initialised ``lakefs.Client`` instance.
+    repo_name:
+        Name of the lakeFS repository.
+    branch_name:
+        Branch (or ref) to read from.
+    path:
+        Object path (e.g. ``"gold/predictions_time.parquet"``).
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame with y_true and y_scores columns.
+    """
+    df = read_parquet(client, repo_name, branch_name, path)
+    LOGGER.debug(
+        "load_predictions_from_lakefs: loaded shape=%s from %s/%s",
+        df.shape,
+        branch_name,
+        path,
+    )
+    return df
+
+
+def merge_branch(
+    client: Any,
+    repo_name: str,
+    source_branch: str,
+    dest_branch: str,
+    message: str,
+    metadata: Optional[Dict[str, str]] = None,
+) -> Any:
+    """Merge a source lakeFS branch into a destination branch.
+
+    Parameters
+    ----------
+    client:
+        An initialised ``lakefs.Client`` instance.
+    repo_name:
+        Name of the lakeFS repository.
+    source_branch:
+        Branch to merge from.
+    dest_branch:
+        Branch to merge into.
+    message:
+        Merge commit message.
+    metadata:
+        Optional key-value metadata for the merge commit.
+
+    Returns
+    -------
+    str
+        Merge result reference.
+    """
+    LOGGER.debug(
+        "merge_branch: merging '%s' -> '%s' in repo '%s'",
+        source_branch,
+        dest_branch,
+        repo_name,
+    )
+    repo = lakefs.Repository(repo_name, client=client)
+    source = repo.branch(source_branch)
+    dest = repo.branch(dest_branch)
+    ref = source.merge_into(dest, message=message)
+    LOGGER.debug("merge_branch: merge complete ref=%s", ref)
+    return ref
+
+
+def get_branch_log(
+    client: Any,
+    repo_name: str,
+    branch_name: str,
+    max_entries: int = 20,
+) -> list[Dict[str, Any]]:
+    """Retrieve commit log for a lakeFS branch.
+
+    Parameters
+    ----------
+    client:
+        An initialised ``lakefs.Client`` instance.
+    repo_name:
+        Name of the lakeFS repository.
+    branch_name:
+        Branch to query.
+    max_entries:
+        Maximum number of log entries to return.
+
+    Returns
+    -------
+    list[dict]
+        List of dicts with keys: id, message, committer, creation_date, metadata.
+    """
+    repo = lakefs.Repository(repo_name, client=client)
+    branch = repo.branch(branch_name)
+    entries = []
+    for i, commit in enumerate(branch.log()):
+        if i >= max_entries:
+            break
+        entries.append({
+            "id": commit.id,
+            "message": commit.message,
+            "committer": getattr(commit, "committer", ""),
+            "creation_date": str(getattr(commit, "creation_date", "")),
+            "metadata": getattr(commit, "metadata", {}),
+        })
+    LOGGER.debug(
+        "get_branch_log: retrieved %d entries from %s/%s",
+        len(entries),
+        repo_name,
+        branch_name,
+    )
+    return entries
+
+
 def plot_confusion_matrix(
     y_true: pd.Series | list[int],
     y_pred: pd.Series | list[int],
@@ -1138,6 +1302,53 @@ def plot_precision_recall_curve(
     output_path = save_chart(fig, filename=filename, chart_dir=chart_dir)
     plt.close(fig)
     LOGGER.debug("plot_precision_recall_curve: saved to %s", output_path)
+    return output_path
+
+
+def plot_pr_curve_overlay(
+    experiments: Dict[str, tuple[pd.Series | list[int], pd.Series | list[float]]],
+    filename: str,
+    chart_dir: Optional[str] = None,
+) -> Path:
+    """Plot overlaid precision-recall curves for multiple experiments.
+
+    Parameters
+    ----------
+    experiments:
+        Mapping from experiment name to ``(y_true, y_scores)`` tuple.
+    filename:
+        Output filename (e.g. ``"pr_curve_overlay.png"``).
+    chart_dir:
+        Override output directory.
+
+    Returns
+    -------
+    pathlib.Path
+        Path to the saved chart image.
+    """
+    fig, ax = plt.subplots(figsize=(8, 6))
+
+    for name, (y_true, y_scores) in experiments.items():
+        precision_vals, recall_vals, _ = precision_recall_curve(y_true, y_scores)
+        if len(recall_vals) > 1 and recall_vals[0] > recall_vals[-1]:
+            recall_for_auc = recall_vals[::-1]
+            precision_for_auc = precision_vals[::-1]
+        else:
+            recall_for_auc = recall_vals
+            precision_for_auc = precision_vals
+        auc_pr = auc(recall_for_auc, precision_for_auc)
+        ax.plot(recall_vals, precision_vals, label=f"{name} (AUC-PR={auc_pr:.3f})")
+
+    ax.set_xlabel("Recall")
+    ax.set_ylabel("Precision")
+    ax.set_title("Precision-Recall Curve Comparison")
+    ax.legend(loc="best")
+    ax.set_xlim([0.0, 1.05])
+    ax.set_ylim([0.0, 1.05])
+
+    output_path = save_chart(fig, filename=filename, chart_dir=chart_dir)
+    plt.close(fig)
+    LOGGER.debug("plot_pr_curve_overlay: saved to %s", output_path)
     return output_path
 
 

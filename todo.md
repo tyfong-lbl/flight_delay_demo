@@ -84,12 +84,12 @@
 - [x] Commit: `Train XGBoost on route-based features, save metrics`
 
 ## Phase 7 - Comparison, Winner Selection, Merge to Main
-- [ ] Load metrics (`gold/metrics_*.json`) and predictions (`gold/predictions_*.parquet`) from both branches
-- [ ] Build side-by-side comparison table
-- [ ] Generate overlay PR curve (both experiments on one chart) and save to `outputs/charts/`
-- [ ] Apply winner decision rule (primary: F1, tiebreaker: AUC-PR)
-- [ ] Merge winner branch into `main` with commit: `Merge winning experiment ([name]) to main`
-- [ ] Print final commit lineage output (bronze -> silver -> experiments -> merge)
+- [x] Load metrics (`gold/metrics_*.json`) and predictions (`gold/predictions_*.parquet`) from both branches
+- [x] Build side-by-side comparison table
+- [x] Generate overlay PR curve (both experiments on one chart) and save to `outputs/charts/`
+- [x] Apply winner decision rule (primary: F1, tiebreaker: AUC-PR)
+- [x] Merge winner branch into `main` with commit: `Merge winning experiment ([name]) to main`
+- [x] Print final commit lineage output (bronze -> silver -> experiments -> merge)
 
 ## Phase 8 - Validation + Demo Readiness
 - [ ] Restart kernels and run both notebooks end-to-end from clean state
