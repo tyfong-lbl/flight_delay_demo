@@ -88,7 +88,7 @@ before the real work starts. The gap is integration.
 
 # CBorg Studio: What You Get When You Log In
 
-<div class="grid grid-cols-2 gap-6 mt-4">
+<div class="grid grid-cols-2 gap-6 mt-2">
 <div>
 
 ### Compute
@@ -100,23 +100,27 @@ before the real work starts. The gap is integration.
 - Preloaded prompts and workflows
 - Framework for introducing new coding agents
 
-</div>
-<div>
-
 ### Data
 - **lakeFS** — Git-like version control for datasets
 - Branches, commits, merges for data files
-- Web-based data browser
 
 ### CBORG API
-- **LiteLLM gateway** (budget enforcement) — one endpoint, many models
-- On-prem open-weight + commercial cloud
+- **LiteLLM gateway** — one endpoint, many models
 - LDAP-provisioned API key with budget controls
 
 </div>
-</div>
+<div class="flex items-center justify-center">
 
-<!-- TODO: Replace with architecture diagram showing JupyterHub + OpenCode + lakeFS + CBORG API -->
+```mermaid
+flowchart TD
+    JH[JupyterHub] --> JL[JupyterLab]
+    JL --> OC[OpenCode]
+    JL --> LF[lakeFS]
+    JL --> API[CBORG API]
+```
+
+</div>
+</div>
 
 <!--
 This is what a user sees when they log in. JupyterHub is the front door.
@@ -135,7 +139,7 @@ VS Code is available via the launcher — it's there but not yet the primary wor
 ### Architecture
 - **LiteLLM gateway** — single API endpoint
 - Routes requests to the right backend model
-- LDAP authentication provisions an ephemeral API key at login
+- CBORG Studio, provisions an ephemeral API key 
 - Per-user budget controls prevent runaway costs
 
 </div>
@@ -152,7 +156,14 @@ Users don't manage credentials — the key is injected into the environment at l
 </div>
 </div>
 
-<!-- TODO: Add diagram showing LDAP → API key → LiteLLM → model backends -->
+```mermaid
+flowchart LR
+    A[User Login] --> B[LDAP Auth]
+    B --> C[API Key\nProvisioned]
+    C --> D[LiteLLM\nGateway]
+    D --> E[On-prem\nModels]
+    D --> F[Cloud\nModels]
+```
 
 <!--
 The CBORG API is the backbone that enables everything else. It's a LiteLLM instance
@@ -437,7 +448,6 @@ Losing branch preserved for inspection.
 </div>
 </div>
 
-<!-- TODO: Add lakeFS UI screenshot showing main branch commit history after merge -->
 
 <!--
 Each experiment gets its own branch, its own gold-layer artifacts, its own trained model.
@@ -504,7 +514,7 @@ CBorg Studio is also an experimental platform for developing and testing AI-firs
 ### Agentic Memory
 Private journal gives AI continuity across sessions. Reads context before acting, records learnings after completing.
 
-<div class="text-xs opacity-60 mt-2">Demonstrated in slide 8</div>
+<div class="text-xs opacity-60 mt-2">Demonstrated in slide 10</div>
 
 </div>
 
@@ -513,7 +523,7 @@ Private journal gives AI continuity across sessions. Reads context before acting
 ### Data Version Control
 lakeFS branches as experiment isolation and lineage tracking. Commit log becomes the audit trail.
 
-<div class="text-xs opacity-60 mt-2">Demonstrated in slides 9–10</div>
+<div class="text-xs opacity-60 mt-2">Demonstrated in slides 11–12</div>
 
 </div>
 
@@ -522,7 +532,7 @@ lakeFS branches as experiment isolation and lineage tracking. Commit log becomes
 ### Workflow Orchestration
 Todo-driven execution with subagent delegation. AI plans, implements, and tracks progress autonomously.
 
-<div class="text-xs opacity-60 mt-2">Demonstrated in slides 8, 11</div>
+<div class="text-xs opacity-60 mt-2">Demonstrated in slides 9, 13</div>
 
 </div>
 
