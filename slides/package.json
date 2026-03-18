@@ -1,0 +1,13 @@
+{
+  "name": "flight-delay-slides",
+  "private": true,
+  "scripts": {
+    "dev": "slidev",
+    "build": "slidev build",
+    "export": "slidev export"
+  },
+  "dependencies": {
+    "@slidev/cli": "^52.0.0",
+    "slidev-theme-lbnl": "github:tyfong-lbl/lbnl-slidedev-theme"
+  }
+}
