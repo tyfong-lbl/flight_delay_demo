@@ -81,7 +81,7 @@ class NotebookPhase4Tests(unittest.TestCase):
             "## Section 2.1 - Setup",
             "## Section 2.2 - Experiment A: Time-Based Features",
             "## Section 2.3 - Experiment B: Route-Based Features",
-            "## Section 2.4 - Comparison & Merge",
+            "## Section 2.4 - Comparison, Winner Selection & Merge",
         ]
         for header in expected_headers:
             self.assertTrue(

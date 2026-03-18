@@ -56,40 +56,40 @@
 - [x] Run tests — confirm modeling utility tests pass
 
 ## Phase 5 - Experiment A (Time Features)
-- [ ] Write failing tests for time-based feature engineering (`hour_of_day`, `day_of_week`, `month`, `is_weekend`, `is_holiday_period`, `time_of_day_bucket`)
-- [ ] Create branch `experiment-time-features` from `silver`
-- [ ] Engineer time-based features
-- [ ] Run tests — confirm time feature tests pass
-- [ ] Apply label encoding for required categoricals
-- [ ] Build feature set and split data (time features + `airline`, `origin`, `distance`)
-- [ ] Write `gold/features_time.parquet` and commit: `Gold layer: time-based features`
-- [ ] Train XGBoost and evaluate model
-- [ ] Generate visuals: confusion matrix, PR curve, top-15 feature importance
-- [ ] Write `gold/metrics_time.json` and `gold/predictions_time.parquet`
-- [ ] Save charts to `outputs/charts/`
-- [ ] Commit: `Train XGBoost on time-based features, save metrics`
+- [x] Write failing tests for time-based feature engineering (`hour_of_day`, `day_of_week`, `month`, `is_weekend`, `is_holiday_period`, `time_of_day_bucket`)
+- [x] Create branch `experiment-time-features` from `silver`
+- [x] Engineer time-based features
+- [x] Run tests — confirm time feature tests pass
+- [x] Apply label encoding for required categoricals
+- [x] Build feature set and split data (time features + `airline`, `origin`, `distance`)
+- [x] Write `gold/features_time.parquet` and commit: `Gold layer: time-based features`
+- [x] Train XGBoost and evaluate model
+- [x] Generate visuals: confusion matrix, PR curve, top-15 feature importance
+- [x] Write `gold/metrics_time.json` and `gold/predictions_time.parquet`
+- [x] Save charts to `outputs/charts/`
+- [x] Commit: `Train XGBoost on time-based features, save metrics`
 
 ## Phase 6 - Experiment B (Route Features + Frequency Encoding)
-- [ ] Write failing tests for route feature engineering (frequency encoding, delay-rate computation from train split only, fallback for unseen categories)
-- [ ] Create branch `experiment-route-features` from `silver`
-- [ ] Engineer route/geography features (`airline`, `origin`, `destination`, `route`, `distance`, `distance_bucket`)
-- [ ] Create leakage-safe historical rate features (`origin_delay_rate`, `airline_delay_rate`, `route_delay_rate` from train split only)
-- [ ] Apply frequency encoding for high-cardinality categoricals
-- [ ] Run tests — confirm route feature tests pass
-- [ ] Write `gold/features_route.parquet` and commit: `Gold layer: route-based features`
-- [ ] Train XGBoost and evaluate model (same hyperparameters as Experiment A)
-- [ ] Generate visuals: confusion matrix, PR curve, top-15 feature importance
-- [ ] Write `gold/metrics_route.json` and `gold/predictions_route.parquet`
-- [ ] Save charts to `outputs/charts/`
-- [ ] Commit: `Train XGBoost on route-based features, save metrics`
+- [x] Write failing tests for route feature engineering (frequency encoding, delay-rate computation from train split only, fallback for unseen categories)
+- [x] Create branch `experiment-route-features` from `silver`
+- [x] Engineer route/geography features (`airline`, `origin`, `destination`, `route`, `distance`, `distance_bucket`)
+- [x] Create leakage-safe historical rate features (`origin_delay_rate`, `airline_delay_rate`, `route_delay_rate` from train split only)
+- [x] Apply frequency encoding for high-cardinality categoricals
+- [x] Run tests — confirm route feature tests pass
+- [x] Write `gold/features_route.parquet` and commit: `Gold layer: route-based features`
+- [x] Train XGBoost and evaluate model (same hyperparameters as Experiment A)
+- [x] Generate visuals: confusion matrix, PR curve, top-15 feature importance
+- [x] Write `gold/metrics_route.json` and `gold/predictions_route.parquet`
+- [x] Save charts to `outputs/charts/`
+- [x] Commit: `Train XGBoost on route-based features, save metrics`
 
 ## Phase 7 - Comparison, Winner Selection, Merge to Main
-- [ ] Load metrics (`gold/metrics_*.json`) and predictions (`gold/predictions_*.parquet`) from both branches
-- [ ] Build side-by-side comparison table
-- [ ] Generate overlay PR curve (both experiments on one chart) and save to `outputs/charts/`
-- [ ] Apply winner decision rule (primary: F1, tiebreaker: AUC-PR)
-- [ ] Merge winner branch into `main` with commit: `Merge winning experiment ([name]) to main`
-- [ ] Print final commit lineage output (bronze -> silver -> experiments -> merge)
+- [x] Load metrics (`gold/metrics_*.json`) and predictions (`gold/predictions_*.parquet`) from both branches
+- [x] Build side-by-side comparison table
+- [x] Generate overlay PR curve (both experiments on one chart) and save to `outputs/charts/`
+- [x] Apply winner decision rule (primary: F1, tiebreaker: AUC-PR)
+- [x] Merge winner branch into `main` with commit: `Merge winning experiment ([name]) to main`
+- [x] Print final commit lineage output (bronze -> silver -> experiments -> merge)
 
 ## Phase 8 - Validation + Demo Readiness
 - [ ] Restart kernels and run both notebooks end-to-end from clean state

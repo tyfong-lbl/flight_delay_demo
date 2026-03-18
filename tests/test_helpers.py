@@ -658,6 +658,132 @@ class TestPhase4ModelingUtilities:
         pd.testing.assert_frame_equal(loaded, predictions)
 
 
+class TestTemporalTrainTestSplit:
+    """Verify temporal_train_test_split partitions by date cutoff."""
+
+    @pytest.fixture
+    def temporal_df(self):
+        """Synthetic DataFrame spanning Jan-Dec 2023."""
+        dates = pd.date_range("2023-01-01", "2023-12-31", freq="D")
+        rng = np.random.default_rng(42)
+        return pd.DataFrame(
+            {
+                "FL_DATE": dates,
+                "feature_a": rng.normal(size=len(dates)),
+                "feature_b": rng.integers(0, 10, size=len(dates)),
+                "is_delayed": rng.choice([0, 1], size=len(dates), p=[0.7, 0.3]),
+            }
+        )
+
+    def test_all_train_dates_before_cutoff(self, temporal_df):
+        from helpers import temporal_train_test_split
+
+        X_train, X_test, y_train, y_test = temporal_train_test_split(
+            temporal_df, target_col="is_delayed", cutoff_date="2023-11-01"
+        )
+        # Train dates should all be before cutoff
+        train_dates = temporal_df.loc[X_train.index, "FL_DATE"]
+        assert (train_dates < pd.Timestamp("2023-11-01")).all()
+
+    def test_all_test_dates_at_or_after_cutoff(self, temporal_df):
+        from helpers import temporal_train_test_split
+
+        X_train, X_test, y_train, y_test = temporal_train_test_split(
+            temporal_df, target_col="is_delayed", cutoff_date="2023-11-01"
+        )
+        test_dates = temporal_df.loc[X_test.index, "FL_DATE"]
+        assert (test_dates >= pd.Timestamp("2023-11-01")).all()
+
+    def test_both_splits_are_non_empty(self, temporal_df):
+        from helpers import temporal_train_test_split
+
+        X_train, X_test, y_train, y_test = temporal_train_test_split(
+            temporal_df, target_col="is_delayed", cutoff_date="2023-11-01"
+        )
+        assert len(X_train) > 0
+        assert len(X_test) > 0
+
+    def test_splits_cover_all_rows(self, temporal_df):
+        from helpers import temporal_train_test_split
+
+        X_train, X_test, y_train, y_test = temporal_train_test_split(
+            temporal_df, target_col="is_delayed", cutoff_date="2023-11-01"
+        )
+        assert len(X_train) + len(X_test) == len(temporal_df)
+
+    def test_date_col_and_target_col_excluded_from_features(self, temporal_df):
+        from helpers import temporal_train_test_split
+
+        X_train, X_test, _, _ = temporal_train_test_split(
+            temporal_df, target_col="is_delayed", cutoff_date="2023-11-01"
+        )
+        assert "FL_DATE" not in X_train.columns
+        assert "is_delayed" not in X_train.columns
+        assert "FL_DATE" not in X_test.columns
+        assert "is_delayed" not in X_test.columns
+
+    def test_raises_on_missing_target_col(self, temporal_df):
+        from helpers import temporal_train_test_split
+
+        with pytest.raises(KeyError, match="target_col"):
+            temporal_train_test_split(
+                temporal_df, target_col="nonexistent", cutoff_date="2023-11-01"
+            )
+
+    def test_raises_on_missing_date_col(self, temporal_df):
+        from helpers import temporal_train_test_split
+
+        with pytest.raises(KeyError, match="date_col"):
+            temporal_train_test_split(
+                temporal_df, target_col="is_delayed", date_col="MISSING",
+                cutoff_date="2023-11-01"
+            )
+
+    def test_raises_when_train_empty(self):
+        from helpers import temporal_train_test_split
+
+        df = pd.DataFrame(
+            {
+                "FL_DATE": pd.to_datetime(["2023-12-01", "2023-12-15"]),
+                "feature": [1, 2],
+                "is_delayed": [0, 1],
+            }
+        )
+        with pytest.raises(ValueError, match="No training rows"):
+            temporal_train_test_split(
+                df, target_col="is_delayed", cutoff_date="2023-01-01"
+            )
+
+    def test_raises_when_test_empty(self):
+        from helpers import temporal_train_test_split
+
+        df = pd.DataFrame(
+            {
+                "FL_DATE": pd.to_datetime(["2023-01-01", "2023-02-01"]),
+                "feature": [1, 2],
+                "is_delayed": [0, 1],
+            }
+        )
+        with pytest.raises(ValueError, match="No test rows"):
+            temporal_train_test_split(
+                df, target_col="is_delayed", cutoff_date="2024-01-01"
+            )
+
+    def test_deterministic_same_cutoff_same_result(self, temporal_df):
+        from helpers import temporal_train_test_split
+
+        r1 = temporal_train_test_split(
+            temporal_df, target_col="is_delayed", cutoff_date="2023-11-01"
+        )
+        r2 = temporal_train_test_split(
+            temporal_df, target_col="is_delayed", cutoff_date="2023-11-01"
+        )
+        pd.testing.assert_frame_equal(r1[0], r2[0])
+        pd.testing.assert_frame_equal(r1[1], r2[1])
+        pd.testing.assert_series_equal(r1[2], r2[2])
+        pd.testing.assert_series_equal(r1[3], r2[3])
+
+
 # ---------------------------------------------------------------------------
 # Chart helper tests (filesystem-based)
 # ---------------------------------------------------------------------------
@@ -730,3 +856,252 @@ class TestSaveChart:
 
         assert any("chart" in r.message.lower() or "save" in r.message.lower()
                     for r in caplog.records), "Expected debug log about chart save"
+
+
+# ---------------------------------------------------------------------------
+# Phase 5: Time-based feature engineering tests
+# ---------------------------------------------------------------------------
+
+
+class TestPhase5TimeFeatures:
+    """Test time-based feature engineering functions for Experiment A."""
+
+    @pytest.fixture
+    def silver_df(self):
+        """Synthetic silver-like DataFrame for time feature tests."""
+        return pd.DataFrame(
+            {
+                "FL_DATE": pd.to_datetime(
+                    [
+                        "2023-01-02",  # Monday
+                        "2023-07-04",  # Tuesday (holiday period)
+                        "2023-12-25",  # Monday (holiday period)
+                        "2023-03-18",  # Saturday
+                        "2023-06-11",  # Sunday
+                        "2023-11-23",  # Thursday (Thanksgiving week)
+                    ]
+                ),
+                "DEP_TIME": [630.0, 1430.0, 0.0, 2359.0, 1200.0, float("nan")],
+                "AIRLINE_CODE": pd.Categorical(
+                    ["AA", "UA", "DL", "WN", "AA", "UA"]
+                ),
+                "ORIGIN": pd.Categorical(
+                    ["ATL", "ORD", "LAX", "DFW", "JFK", "ATL"]
+                ),
+                "DEST": pd.Categorical(
+                    ["ORD", "LAX", "DFW", "JFK", "ATL", "ORD"]
+                ),
+                "DISTANCE": [600.0, 1700.0, 1200.0, 1400.0, 800.0, 600.0],
+                "arrival_delay": [5.0, 20.0, -3.0, 45.0, 10.0, 30.0],
+                "is_delayed": [0, 1, 0, 1, 0, 1],
+            }
+        )
+
+    def test_engineer_time_features_hour_of_day(self, silver_df):
+        from helpers import engineer_time_features
+
+        result = engineer_time_features(silver_df)
+        # 630 -> 6, 1430 -> 14, 0 -> 0, 2359 -> 23, 1200 -> 12, NaN -> -1
+        assert result["hour_of_day"].iloc[0] == 6
+        assert result["hour_of_day"].iloc[1] == 14
+        assert result["hour_of_day"].iloc[2] == 0
+        assert result["hour_of_day"].iloc[3] == 23
+        assert result["hour_of_day"].iloc[4] == 12
+        assert result["hour_of_day"].iloc[5] == -1  # NaN sentinel
+
+    def test_engineer_time_features_day_of_week(self, silver_df):
+        from helpers import engineer_time_features
+
+        result = engineer_time_features(silver_df)
+        # 2023-01-02 = Monday=0, 2023-07-04=Tuesday=1, 2023-12-25=Monday=0
+        # 2023-03-18=Saturday=5, 2023-06-11=Sunday=6, 2023-11-23=Thursday=3
+        expected = [0, 1, 0, 5, 6, 3]
+        assert list(result["day_of_week"]) == expected
+
+    def test_engineer_time_features_month(self, silver_df):
+        from helpers import engineer_time_features
+
+        result = engineer_time_features(silver_df)
+        expected = [1, 7, 12, 3, 6, 11]
+        assert list(result["month"]) == expected
+
+    def test_engineer_time_features_is_weekend(self, silver_df):
+        from helpers import engineer_time_features
+
+        result = engineer_time_features(silver_df)
+        # Saturday=1, Sunday=1, rest=0
+        expected = [0, 0, 0, 1, 1, 0]
+        assert list(result["is_weekend"]) == expected
+
+    def test_engineer_time_features_is_holiday_period(self, silver_df):
+        from helpers import engineer_time_features
+
+        result = engineer_time_features(silver_df)
+        # Jan 2 = holiday (Dec 20 - Jan 3), Jul 4 = holiday (Jun 15 - Sep 5)
+        # Dec 25 = holiday (Dec 20 - Jan 3), Mar 18 = NOT holiday
+        # Jun 11 = NOT holiday (< Jun 15), Nov 23 = holiday (Nov 20 - Nov 30)
+        expected = [1, 1, 1, 0, 0, 1]
+        assert list(result["is_holiday_period"]) == expected
+
+    def test_engineer_time_features_time_of_day_bucket(self, silver_df):
+        from helpers import engineer_time_features
+
+        result = engineer_time_features(silver_df)
+        # hour 6 -> early_morning (5-8), 14 -> afternoon (12-17), 0 -> night (22-4),
+        # 23 -> night, 12 -> afternoon, -1 (NaN) -> unknown
+        expected = ["early_morning", "afternoon", "night", "night", "afternoon", "unknown"]
+        assert list(result["time_of_day_bucket"]) == expected
+
+    def test_engineer_time_features_all_columns_present(self, silver_df):
+        from helpers import engineer_time_features
+
+        result = engineer_time_features(silver_df)
+        expected_cols = {
+            "hour_of_day",
+            "day_of_week",
+            "month",
+            "is_weekend",
+            "is_holiday_period",
+            "time_of_day_bucket",
+        }
+        assert expected_cols.issubset(set(result.columns))
+
+    def test_engineer_time_features_preserves_original_columns(self, silver_df):
+        from helpers import engineer_time_features
+
+        original_cols = set(silver_df.columns)
+        result = engineer_time_features(silver_df)
+        assert original_cols.issubset(set(result.columns))
+
+    def test_engineer_time_features_handles_dep_time_2400(self):
+        """DEP_TIME=2400 should map to hour_of_day=0."""
+        from helpers import engineer_time_features
+
+        df = pd.DataFrame(
+            {
+                "FL_DATE": pd.to_datetime(["2023-06-15"]),
+                "DEP_TIME": [2400.0],
+                "AIRLINE_CODE": pd.Categorical(["AA"]),
+                "ORIGIN": pd.Categorical(["ATL"]),
+                "DEST": pd.Categorical(["ORD"]),
+                "DISTANCE": [600.0],
+                "arrival_delay": [5.0],
+                "is_delayed": [0],
+            }
+        )
+        result = engineer_time_features(df)
+        assert result["hour_of_day"].iloc[0] == 0
+
+
+# ---------------------------------------------------------------------------
+# Phase 6: Route-based feature engineering tests
+# ---------------------------------------------------------------------------
+
+
+class TestPhase6RouteFeatures:
+    """Test route-based feature engineering and frequency encoding."""
+
+    @pytest.fixture
+    def silver_df(self):
+        """Synthetic silver-like DataFrame for route feature tests."""
+        return pd.DataFrame(
+            {
+                "FL_DATE": pd.to_datetime(
+                    [
+                        "2023-01-01",
+                        "2023-01-02",
+                        "2023-01-03",
+                        "2023-01-04",
+                        "2023-01-05",
+                        "2023-01-06",
+                        "2023-01-07",
+                        "2023-01-08",
+                    ]
+                ),
+                "AIRLINE_CODE": pd.Categorical(
+                    ["AA", "AA", "UA", "UA", "DL", "DL", "AA", "WN"]
+                ),
+                "ORIGIN": pd.Categorical(
+                    ["ATL", "ATL", "ORD", "ORD", "LAX", "LAX", "ATL", "DFW"]
+                ),
+                "DEST": pd.Categorical(
+                    ["ORD", "ORD", "LAX", "LAX", "DFW", "DFW", "ORD", "JFK"]
+                ),
+                "DISTANCE": [600.0, 600.0, 1700.0, 1700.0, 1200.0, 1200.0, 600.0, 1400.0],
+                "arrival_delay": [5.0, 20.0, -3.0, 45.0, 10.0, 30.0, 15.0, 60.0],
+                "is_delayed": [0, 1, 0, 1, 0, 1, 0, 1],
+                "DEP_TIME": [800.0, 900.0, 1000.0, 1100.0, 1200.0, 1300.0, 1400.0, 1500.0],
+            }
+        )
+
+    def test_engineer_route_features_creates_route(self, silver_df):
+        from helpers import engineer_route_features
+
+        result = engineer_route_features(silver_df)
+        # route = ORIGIN-DEST
+        assert result["route"].iloc[0] == "ATL-ORD"
+        assert result["route"].iloc[2] == "ORD-LAX"
+        assert result["route"].iloc[7] == "DFW-JFK"
+
+    def test_engineer_route_features_creates_distance_bucket(self, silver_df):
+        from helpers import engineer_route_features
+
+        result = engineer_route_features(silver_df)
+        assert "distance_bucket" in result.columns
+        # All values should be one of: short, medium, long, very_long
+        valid_buckets = {"short", "medium", "long", "very_long"}
+        assert set(result["distance_bucket"].unique()).issubset(valid_buckets)
+        # 600 -> short, 1700 -> long, 1200 -> medium, 1400 -> long
+        assert result["distance_bucket"].iloc[0] == "short"
+        assert result["distance_bucket"].iloc[2] == "long"
+
+    def test_frequency_encode_produces_correct_frequencies(self):
+        from helpers import frequency_encode
+
+        train = pd.Series(["A", "A", "A", "B", "B", "C"])
+        test = pd.Series(["A", "B", "C", "D"])
+        train_enc, test_enc = frequency_encode(train, test)
+        # A appears 3/6=0.5, B appears 2/6=0.333, C appears 1/6=0.167
+        assert abs(train_enc.iloc[0] - 0.5) < 0.01
+        assert abs(train_enc.iloc[3] - 1 / 3) < 0.01
+        assert abs(test_enc.iloc[0] - 0.5) < 0.01
+        # D is unseen, should get 0.0
+        assert test_enc.iloc[3] == 0.0
+
+    def test_compute_delay_rates_from_train_only(self, silver_df):
+        from helpers import compute_delay_rates
+
+        # Use first 6 rows as "train"
+        train = silver_df.iloc[:6].copy()
+        rates = compute_delay_rates(train, group_col="AIRLINE_CODE", target_col="is_delayed")
+        # AA: rows 0,1 -> is_delayed=[0,1] -> rate=0.5
+        # UA: rows 2,3 -> is_delayed=[0,1] -> rate=0.5
+        # DL: rows 4,5 -> is_delayed=[0,1] -> rate=0.5
+        assert abs(rates["AA"] - 0.5) < 0.01
+        assert abs(rates["UA"] - 0.5) < 0.01
+        assert abs(rates["DL"] - 0.5) < 0.01
+
+    def test_apply_delay_rates_with_fallback_for_unseen(self):
+        from helpers import apply_delay_rates
+
+        df = pd.DataFrame({"airline": ["AA", "UA", "UNKNOWN"]})
+        rate_map = {"AA": 0.3, "UA": 0.5}
+        result = apply_delay_rates(df, rate_map, col="airline", default_rate=0.25)
+        assert abs(result.iloc[0] - 0.3) < 0.01
+        assert abs(result.iloc[1] - 0.5) < 0.01
+        assert abs(result.iloc[2] - 0.25) < 0.01  # fallback
+
+    def test_frequency_encode_handles_all_unseen(self):
+        from helpers import frequency_encode
+
+        train = pd.Series(["A", "B"])
+        test = pd.Series(["C", "D"])
+        _, test_enc = frequency_encode(train, test)
+        assert all(test_enc == 0.0)
+
+    def test_engineer_route_features_preserves_original_columns(self, silver_df):
+        from helpers import engineer_route_features
+
+        original_cols = set(silver_df.columns)
+        result = engineer_route_features(silver_df)
+        assert original_cols.issubset(set(result.columns))

@@ -21,7 +21,7 @@
 - **Data format:** Parquet for bronze/silver/gold artifacts
 - **Artifact format:** JSON for metrics in gold layer
 - **Versioning/lineage:** lakeFS Python SDK only (for consistency in narrative)
-- **Reproducibility controls:** `random_state=42`, fixed split strategy, deterministic sampling seed
+- **Reproducibility controls:** temporal train/test split on `FL_DATE` with cutoff `2023-07-01` (train: Jan-Jun, test: Jul-Aug; the Kaggle sample only covers Jan-Aug 2023), `random_state=42` for model training, deterministic sampling seed
 
 ---
 
@@ -60,6 +60,7 @@ All charts are saved to `outputs/charts/` at `dpi=150` with consistent seaborn s
 - Commit meaningful state transitions in lakeFS at each medallion/experiment boundary.
 - Prefer low-risk implementation over model complexity.
 - Ensure every chart/table is presentation-ready and reproducible.
+- **Deviation from spec:** The spec calls for a random stratified 80/20 split. The plan uses a **temporal split** (train on Jan-Jun 2023, test on Jul-Aug 2023) to avoid data leakage from future time periods, which is more realistic for flight delay prediction. The Kaggle sample dataset only covers Jan-Aug 2023, so the cutoff is `FL_DATE < 2023-07-01`.
 
 ---
 
@@ -247,7 +248,7 @@ Create `02_experiments.ipynb` structure and shared utilities for fair experiment
    - Run tests — confirm they fail.
 
 4. **Add modeling utilities to `helpers.py`**
-   - Deterministic train/test split (`stratify`, `random_state=42`).
+   - Temporal train/test split (split on `FL_DATE < 2023-07-01` for train, `>= 2023-07-01` for test).
    - XGBoost model factory with fixed hyperparameters.
    - Metrics function: accuracy, precision, recall, F1, AUC-PR.
    - Plotting functions: confusion matrix, PR curve, feature importance (all saving to `outputs/charts/`).

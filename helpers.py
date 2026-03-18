@@ -37,8 +37,10 @@ import matplotlib
 
 try:
     from IPython.core.getipython import get_ipython
+    from IPython.display import display as _ipython_display
 except Exception:  # pragma: no cover - defensive import fallback
     get_ipython = None
+    _ipython_display = None
 
 if get_ipython is None or get_ipython() is None:
     matplotlib.use("Agg")  # non-interactive backend for scripts/CI only
@@ -611,6 +613,258 @@ def create_is_delayed_target(
 
 
 # ---------------------------------------------------------------------------
+# Phase 5: Time-based feature engineering
+# ---------------------------------------------------------------------------
+
+
+import numpy as np
+
+
+def engineer_time_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Engineer time-based features for Experiment A.
+
+    Extracts temporal signals from ``FL_DATE`` and ``DEP_TIME`` columns.
+    All new columns are appended to a copy of *df*; the original is not
+    mutated.
+
+    New columns created:
+    - ``hour_of_day``: departure hour (0-23); -1 sentinel for missing DEP_TIME
+    - ``day_of_week``: Monday=0 .. Sunday=6
+    - ``month``: 1-12
+    - ``is_weekend``: 1 for Saturday/Sunday, 0 otherwise
+    - ``is_holiday_period``: 1 if the date falls in a high-travel period
+    - ``time_of_day_bucket``: categorical bucket based on hour
+
+    Parameters
+    ----------
+    df:
+        Silver-layer DataFrame with ``FL_DATE`` (datetime) and ``DEP_TIME``
+        (float, HHMM format) columns.
+
+    Returns
+    -------
+    pd.DataFrame
+        Copy of *df* with the six new feature columns appended.
+    """
+    result = df.copy()
+
+    # --- hour_of_day ---
+    dep = result["DEP_TIME"].copy()
+    # Handle 2400 -> 0
+    dep = dep.where(dep != 2400, 0)
+    # Extract hour: integer division by 100
+    hour = (dep // 100).astype("Int64")  # nullable int to preserve NaN
+    # Convert to regular int with -1 sentinel for NaN
+    result["hour_of_day"] = hour.fillna(-1).astype(int)
+    LOGGER.debug(
+        "engineer_time_features: hour_of_day computed, NaN count=%d",
+        dep.isna().sum(),
+    )
+
+    # --- day_of_week, month ---
+    result["day_of_week"] = result["FL_DATE"].dt.dayofweek
+    result["month"] = result["FL_DATE"].dt.month
+
+    # --- is_weekend ---
+    result["is_weekend"] = (result["day_of_week"] >= 5).astype(int)
+
+    # --- is_holiday_period ---
+    # Holiday windows: Dec 20 - Jan 3, Jun 15 - Sep 5, Nov 20 - Nov 30
+    month_col = result["FL_DATE"].dt.month
+    day_col = result["FL_DATE"].dt.day
+    is_holiday = (
+        # Dec 20 - Dec 31
+        ((month_col == 12) & (day_col >= 20))
+        # Jan 1 - Jan 3
+        | ((month_col == 1) & (day_col <= 3))
+        # Jun 15 - Jun 30
+        | ((month_col == 6) & (day_col >= 15))
+        # Jul - Aug (full months)
+        | (month_col == 7)
+        | (month_col == 8)
+        # Sep 1 - Sep 5
+        | ((month_col == 9) & (day_col <= 5))
+        # Nov 20 - Nov 30 (Thanksgiving)
+        | ((month_col == 11) & (day_col >= 20))
+    )
+    result["is_holiday_period"] = is_holiday.astype(int)
+    LOGGER.debug(
+        "engineer_time_features: is_holiday_period sum=%d / %d",
+        result["is_holiday_period"].sum(),
+        len(result),
+    )
+
+    # --- time_of_day_bucket ---
+    # early_morning: 5-8, morning: 9-11, afternoon: 12-17,
+    # evening: 18-21, night: 22-4, unknown: -1
+    def _hour_to_bucket(h: int) -> str:
+        if h == -1:
+            return "unknown"
+        if 5 <= h <= 8:
+            return "early_morning"
+        if 9 <= h <= 11:
+            return "morning"
+        if 12 <= h <= 17:
+            return "afternoon"
+        if 18 <= h <= 21:
+            return "evening"
+        return "night"  # 22-23, 0-4
+
+    result["time_of_day_bucket"] = result["hour_of_day"].apply(_hour_to_bucket)
+    LOGGER.debug(
+        "engineer_time_features: bucket distribution: %s",
+        result["time_of_day_bucket"].value_counts().to_dict(),
+    )
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Phase 6: Route-based feature engineering
+# ---------------------------------------------------------------------------
+
+
+def engineer_route_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Engineer route/geography features for Experiment B.
+
+    Creates composite route identifier and distance buckets from the silver
+    dataset.  All new columns are appended to a copy of *df*.
+
+    New columns:
+    - ``route``: ``ORIGIN-DEST`` string
+    - ``distance_bucket``: categorical (short / medium / long / very_long)
+
+    Parameters
+    ----------
+    df:
+        Silver-layer DataFrame with ``ORIGIN``, ``DEST``, ``DISTANCE``.
+
+    Returns
+    -------
+    pd.DataFrame
+        Copy of *df* with route feature columns appended.
+    """
+    result = df.copy()
+
+    # --- route ---
+    result["route"] = result["ORIGIN"].astype(str) + "-" + result["DEST"].astype(str)
+    LOGGER.debug(
+        "engineer_route_features: unique routes=%d", result["route"].nunique()
+    )
+
+    # --- distance_bucket ---
+    # short: <750, medium: 750-1500, long: 1500-2500, very_long: >2500
+    bins = [0, 750, 1500, 2500, float("inf")]
+    labels = ["short", "medium", "long", "very_long"]
+    result["distance_bucket"] = pd.cut(
+        result["DISTANCE"], bins=bins, labels=labels, right=False
+    ).astype(str)
+    LOGGER.debug(
+        "engineer_route_features: distance_bucket distribution: %s",
+        result["distance_bucket"].value_counts().to_dict(),
+    )
+
+    return result
+
+
+def frequency_encode(
+    train_series: pd.Series, test_series: pd.Series
+) -> tuple[pd.Series, pd.Series]:
+    """Frequency-encode a categorical column using train-set proportions.
+
+    Unseen categories in the test set receive ``0.0``.
+
+    Parameters
+    ----------
+    train_series:
+        Categorical values from the training split.
+    test_series:
+        Categorical values from the test split.
+
+    Returns
+    -------
+    tuple[pd.Series, pd.Series]
+        (train_encoded, test_encoded) with frequency proportions.
+    """
+    freq_map = train_series.value_counts(normalize=True)
+    train_enc = train_series.map(freq_map).astype(float)
+    test_enc = test_series.map(freq_map).fillna(0.0).astype(float)
+    LOGGER.debug(
+        "frequency_encode: unique_train=%d unique_test=%d unseen_test=%d",
+        train_series.nunique(),
+        test_series.nunique(),
+        (test_enc == 0.0).sum(),
+    )
+    return train_enc, test_enc
+
+
+def compute_delay_rates(
+    train_df: pd.DataFrame,
+    group_col: str,
+    target_col: str = "is_delayed",
+) -> Dict[str, float]:
+    """Compute delay rate per group using the training split only.
+
+    This function is **leakage-safe**: it only uses training data to build
+    the rate mapping.
+
+    Parameters
+    ----------
+    train_df:
+        Training-split DataFrame.
+    group_col:
+        Column name to group by (e.g. ``"AIRLINE_CODE"``).
+    target_col:
+        Binary target column.
+
+    Returns
+    -------
+    dict
+        Mapping from group value to delay rate (float 0-1).
+    """
+    rates = train_df.groupby(group_col)[target_col].mean().to_dict()
+    LOGGER.debug("compute_delay_rates: group_col=%s groups=%d", group_col, len(rates))
+    return rates
+
+
+def apply_delay_rates(
+    df: pd.DataFrame,
+    rate_map: Dict[str, float],
+    col: str,
+    default_rate: float = 0.0,
+) -> pd.Series:
+    """Apply pre-computed delay rates to a DataFrame column.
+
+    Unseen categories receive *default_rate* as a safe fallback.
+
+    Parameters
+    ----------
+    df:
+        DataFrame with the categorical column.
+    rate_map:
+        Mapping from category value to delay rate.
+    col:
+        Column name to look up in *rate_map*.
+    default_rate:
+        Fallback value for categories not present in *rate_map*.
+
+    Returns
+    -------
+    pd.Series
+        Series of delay rates aligned with *df* index.
+    """
+    result = df[col].map(rate_map).fillna(default_rate).astype(float)
+    unseen = (df[col].map(rate_map).isna()).sum()
+    LOGGER.debug(
+        "apply_delay_rates: col=%s unseen_categories=%d default_rate=%.3f",
+        col,
+        unseen,
+        default_rate,
+    )
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Phase 4 modeling helpers
 # ---------------------------------------------------------------------------
 
@@ -622,6 +876,11 @@ def deterministic_train_test_split(
     random_state: int = 42,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series]:
     """Create deterministic stratified train/test splits.
+
+    .. deprecated::
+        Use :func:`temporal_train_test_split` for experiment notebooks.
+        This function is retained for backward compatibility with tests and
+        any non-temporal splitting needs.
 
     Parameters
     ----------
@@ -663,6 +922,88 @@ def deterministic_train_test_split(
     return X_train, X_test, y_train, y_test
 
 
+def temporal_train_test_split(
+    df: pd.DataFrame,
+    target_col: str,
+    date_col: str = "FL_DATE",
+    cutoff_date: str = "2023-07-01",
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series]:
+    """Split data temporally: train on dates before *cutoff_date*, test on dates at or after.
+
+    This produces a realistic evaluation scenario where the model is trained on
+    historical data and tested on future, unseen time periods.  The split is
+    fully deterministic — the same cutoff always yields the same partition.
+
+    Parameters
+    ----------
+    df:
+        Input DataFrame containing features, the target column, and the date
+        column.
+    target_col:
+        Name of the binary target column (e.g. ``"is_delayed"``).
+    date_col:
+        Name of the datetime column used for the temporal boundary
+        (default ``"FL_DATE"``).
+    cutoff_date:
+        ISO-format date string.  Rows with ``date_col < cutoff_date`` go to
+        train; rows with ``date_col >= cutoff_date`` go to test.
+        Default ``"2023-07-01"`` gives roughly 75/25 train/test for the
+        available 2023 data (Jan–Aug).
+
+    Returns
+    -------
+    tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series]
+        ``(X_train, X_test, y_train, y_test)`` — features exclude both
+        *target_col* and *date_col* so they are model-ready.
+
+    Raises
+    ------
+    KeyError
+        If *target_col* or *date_col* is missing from *df*.
+    ValueError
+        If either the train or test partition is empty after splitting.
+    """
+    for col, label in [(target_col, "target_col"), (date_col, "date_col")]:
+        if col not in df.columns:
+            raise KeyError(f"{label} '{col}' not found in DataFrame")
+
+    cutoff = pd.Timestamp(cutoff_date)
+    dates = pd.to_datetime(df[date_col])
+
+    train_mask = dates < cutoff
+    test_mask = dates >= cutoff
+
+    if not train_mask.any():
+        raise ValueError(
+            f"No training rows before cutoff {cutoff_date}. "
+            "Check date_col values or choose an earlier cutoff."
+        )
+    if not test_mask.any():
+        raise ValueError(
+            f"No test rows at or after cutoff {cutoff_date}. "
+            "Check date_col values or choose a later cutoff."
+        )
+
+    drop_cols = [target_col, date_col]
+    X_train = df.loc[train_mask].drop(columns=drop_cols)
+    X_test = df.loc[test_mask].drop(columns=drop_cols)
+    y_train = df.loc[train_mask, target_col]
+    y_test = df.loc[test_mask, target_col]
+
+    LOGGER.debug(
+        "temporal_train_test_split: cutoff=%s train=%d (%.1f%%) test=%d (%.1f%%) "
+        "train_delay_rate=%.4f test_delay_rate=%.4f",
+        cutoff_date,
+        len(X_train),
+        100 * len(X_train) / len(df),
+        len(X_test),
+        100 * len(X_test) / len(df),
+        y_train.mean(),
+        y_test.mean(),
+    )
+    return X_train, X_test, y_train, y_test
+
+
 def create_xgboost_classifier(
     random_state: int = 42,
 ) -> xgb.XGBClassifier:
@@ -676,7 +1017,7 @@ def create_xgboost_classifier(
         max_depth=6,
         learning_rate=0.1,
         eval_metric="logloss",
-        use_label_encoder=False,
+        n_jobs=2,
         random_state=random_state,
     )
 
@@ -755,6 +1096,180 @@ def load_predictions_parquet(path: str | Path) -> pd.DataFrame:
     return df
 
 
+def load_metrics_from_lakefs(
+    client: Any,
+    repo_name: str,
+    branch_name: str,
+    path: str,
+) -> Dict[str, float]:
+    """Load a metrics JSON file from a lakeFS branch.
+
+    Parameters
+    ----------
+    client:
+        An initialised ``lakefs.Client`` instance.
+    repo_name:
+        Name of the lakeFS repository.
+    branch_name:
+        Branch (or ref) to read from.
+    path:
+        Object path (e.g. ``"gold/metrics_time.json"``).
+
+    Returns
+    -------
+    dict
+        Metrics dictionary.
+    """
+    repo = lakefs.Repository(repo_name, client=client)
+    obj = repo.branch(branch_name).object(path)
+    with obj.reader(mode="rb") as reader:
+        raw = reader.read()
+    raw_bytes = raw if isinstance(raw, bytes) else raw.encode()
+    payload = json.loads(raw_bytes)
+    metrics = {str(k): float(v) for k, v in payload.items()}
+    LOGGER.debug(
+        "load_metrics_from_lakefs: loaded %d metrics from %s/%s",
+        len(metrics),
+        branch_name,
+        path,
+    )
+    return metrics
+
+
+def load_predictions_from_lakefs(
+    client: Any,
+    repo_name: str,
+    branch_name: str,
+    path: str,
+) -> pd.DataFrame:
+    """Load a predictions parquet file from a lakeFS branch.
+
+    Parameters
+    ----------
+    client:
+        An initialised ``lakefs.Client`` instance.
+    repo_name:
+        Name of the lakeFS repository.
+    branch_name:
+        Branch (or ref) to read from.
+    path:
+        Object path (e.g. ``"gold/predictions_time.parquet"``).
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame with y_true and y_scores columns.
+    """
+    df = read_parquet(client, repo_name, branch_name, path)
+    LOGGER.debug(
+        "load_predictions_from_lakefs: loaded shape=%s from %s/%s",
+        df.shape,
+        branch_name,
+        path,
+    )
+    return df
+
+
+def merge_branch(
+    client: Any,
+    repo_name: str,
+    source_branch: str,
+    dest_branch: str,
+    message: str,
+    metadata: Optional[Dict[str, str]] = None,
+) -> Any:
+    """Merge a source lakeFS branch into a destination branch.
+
+    Parameters
+    ----------
+    client:
+        An initialised ``lakefs.Client`` instance.
+    repo_name:
+        Name of the lakeFS repository.
+    source_branch:
+        Branch to merge from.
+    dest_branch:
+        Branch to merge into.
+    message:
+        Merge commit message.
+    metadata:
+        Optional key-value metadata for the merge commit.
+
+    Returns
+    -------
+    str
+        Merge result reference.
+    """
+    LOGGER.debug(
+        "merge_branch: merging '%s' -> '%s' in repo '%s'",
+        source_branch,
+        dest_branch,
+        repo_name,
+    )
+    repo = lakefs.Repository(repo_name, client=client)
+    source = repo.branch(source_branch)
+    dest = repo.branch(dest_branch)
+    try:
+        ref = source.merge_into(dest, message=message)
+    except BadRequestException as exc:
+        if "no changes" in str(exc).lower():
+            LOGGER.debug(
+                "merge_branch: no changes to merge from %s -> %s",
+                source_branch,
+                dest_branch,
+            )
+            return None
+        raise
+    LOGGER.debug("merge_branch: merge complete ref=%s", ref)
+    return ref
+
+
+def get_branch_log(
+    client: Any,
+    repo_name: str,
+    branch_name: str,
+    max_entries: int = 20,
+) -> list[Dict[str, Any]]:
+    """Retrieve commit log for a lakeFS branch.
+
+    Parameters
+    ----------
+    client:
+        An initialised ``lakefs.Client`` instance.
+    repo_name:
+        Name of the lakeFS repository.
+    branch_name:
+        Branch to query.
+    max_entries:
+        Maximum number of log entries to return.
+
+    Returns
+    -------
+    list[dict]
+        List of dicts with keys: id, message, committer, creation_date, metadata.
+    """
+    repo = lakefs.Repository(repo_name, client=client)
+    branch = repo.branch(branch_name)
+    entries = []
+    for i, commit in enumerate(branch.log()):
+        if i >= max_entries:
+            break
+        entries.append({
+            "id": commit.id,
+            "message": commit.message,
+            "committer": getattr(commit, "committer", ""),
+            "creation_date": str(getattr(commit, "creation_date", "")),
+            "metadata": getattr(commit, "metadata", {}),
+        })
+    LOGGER.debug(
+        "get_branch_log: retrieved %d entries from %s/%s",
+        len(entries),
+        repo_name,
+        branch_name,
+    )
+    return entries
+
+
 def plot_confusion_matrix(
     y_true: pd.Series | list[int],
     y_pred: pd.Series | list[int],
@@ -769,6 +1284,8 @@ def plot_confusion_matrix(
     ax.set_ylabel("Actual")
     ax.set_title("Confusion Matrix")
     output_path = save_chart(fig, filename=filename, chart_dir=chart_dir)
+    if _ipython_display is not None:
+        _ipython_display(fig)
     plt.close(fig)
     LOGGER.debug("plot_confusion_matrix: saved to %s", output_path)
     return output_path
@@ -797,8 +1314,59 @@ def plot_precision_recall_curve(
     ax.set_title("Precision-Recall Curve")
     ax.legend(loc="best")
     output_path = save_chart(fig, filename=filename, chart_dir=chart_dir)
+    if _ipython_display is not None:
+        _ipython_display(fig)
     plt.close(fig)
     LOGGER.debug("plot_precision_recall_curve: saved to %s", output_path)
+    return output_path
+
+
+def plot_pr_curve_overlay(
+    experiments: Dict[str, tuple[pd.Series | list[int], pd.Series | list[float]]],
+    filename: str,
+    chart_dir: Optional[str] = None,
+) -> Path:
+    """Plot overlaid precision-recall curves for multiple experiments.
+
+    Parameters
+    ----------
+    experiments:
+        Mapping from experiment name to ``(y_true, y_scores)`` tuple.
+    filename:
+        Output filename (e.g. ``"pr_curve_overlay.png"``).
+    chart_dir:
+        Override output directory.
+
+    Returns
+    -------
+    pathlib.Path
+        Path to the saved chart image.
+    """
+    fig, ax = plt.subplots(figsize=(8, 6))
+
+    for name, (y_true, y_scores) in experiments.items():
+        precision_vals, recall_vals, _ = precision_recall_curve(y_true, y_scores)
+        if len(recall_vals) > 1 and recall_vals[0] > recall_vals[-1]:
+            recall_for_auc = recall_vals[::-1]
+            precision_for_auc = precision_vals[::-1]
+        else:
+            recall_for_auc = recall_vals
+            precision_for_auc = precision_vals
+        auc_pr = auc(recall_for_auc, precision_for_auc)
+        ax.plot(recall_vals, precision_vals, label=f"{name} (AUC-PR={auc_pr:.3f})")
+
+    ax.set_xlabel("Recall")
+    ax.set_ylabel("Precision")
+    ax.set_title("Precision-Recall Curve Comparison")
+    ax.legend(loc="best")
+    ax.set_xlim([0.0, 1.05])
+    ax.set_ylim([0.0, 1.05])
+
+    output_path = save_chart(fig, filename=filename, chart_dir=chart_dir)
+    if _ipython_display is not None:
+        _ipython_display(fig)
+    plt.close(fig)
+    LOGGER.debug("plot_pr_curve_overlay: saved to %s", output_path)
     return output_path
 
 
@@ -827,6 +1395,8 @@ def plot_feature_importance(
     ax.set_xlabel("Importance")
     ax.set_ylabel("Feature")
     output_path = save_chart(fig, filename=filename, chart_dir=chart_dir)
+    if _ipython_display is not None:
+        _ipython_display(fig)
     plt.close(fig)
     LOGGER.debug("plot_feature_importance: saved to %s", output_path)
     return output_path
