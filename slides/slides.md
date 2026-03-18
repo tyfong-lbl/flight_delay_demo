@@ -600,12 +600,12 @@ That's the point: integration eliminates friction.
 
 <div class="flex items-start gap-3">
   <div class="text-2xl">1.</div>
-  <div><strong>Zero-friction AI access</strong> — LDAP login gives you an API key, a coding agent, and connected tools. No setup.</div>
+  <div><strong>Log in and go</strong> — LDAP login gives you an API key, a coding agent, and connected tools. No setup.</div>
 </div>
 
 <div class="flex items-start gap-3">
   <div class="text-2xl">2.</div>
-  <div><strong>Data version control changes experimentation</strong> — lakeFS branches isolate experiments; the commit log is the audit trail.</div>
+  <div><strong>Data version control changes experimentation</strong> — branches isolate experiments; the commit log is the audit trail.</div>
 </div>
 
 <div class="flex items-start gap-3">
@@ -615,12 +615,11 @@ That's the point: integration eliminates friction.
 
 <div class="flex items-start gap-3">
   <div class="text-2xl">4.</div>
-  <div><strong>Integration is the product</strong> — the individual tools exist elsewhere. The value is having them work together out of the box.</div>
+  <div><strong>Accelerate experimentation</strong> — AI plus data versioning in one platform lets users move faster by clearing infrastructure roadbocks.</div>
 </div>
-
 <div class="flex items-start gap-3">
   <div class="text-2xl">5.</div>
-  <div><strong>Experimental capabilities are shipping</strong> — agentic memory, data version control, workflow orchestration. All working today.</div>
+  <div><strong>Further Work</strong> — Set up separate agent instances for a separate step of  judging output.</div>
 </div>
 
 </v-clicks>
@@ -636,7 +635,6 @@ The data versioning combined with agentic coding accelerates the speed of iterat
 Futher work -- setting up separate agent instance for judging the output of code. 
 -->
 
----
 ---
 
 # Links
