@@ -621,10 +621,21 @@ That's the point: integration eliminates friction.
 Five things to take away.
 Log in and go.
 Data versioning changes how you think about experimentation.
-AI agents can be disciplined engineers, not just autocomplete.
-The value proposition is integration 
-Facilitate experimental capabilities 
+In this case, this took shape over a day or two of work while jetlagged, and would be a good start for further iteration
+The data versioning combined with agentic coding accelerates the speed of iteration.
+Futher work -- setting up separate agent instance for judging the output of code. 
 -->
+
+---
+---
+
+# Links
+
+Resources referenced in this presentation:
+
+- Superpowers: https://github.com/obra/superpowers — *OpenCode: The AI Coding Agent*
+- learning-opportunities: https://github.com/DrCatHicks/learning-opportunities) — *OpenCode: The AI Coding Agent*
+- private-journal-mcp: https://github.com/obra/private-journal-mcp  — *Demo: Persistent Memory Across Sessions*
 
 ---
 layout: center
