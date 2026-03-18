@@ -182,6 +182,7 @@ Branches, commits, merges — but for **datasets**, not source code.
 <div class="grid grid-cols-2 gap-8 mt-4">
 <div>
 
+- [Enterprise product](https://lakefs.io/)
 - S3-compatible storage backends (on-prem and cloud)
 - Every data state is versioned, addressable, auditable
 - Branch per experiment, merge the winner
@@ -241,6 +242,7 @@ This is the branching pattern from the previous diagram, running in production.
 <div>
 
 ### Capabilities
+- Open source coding agent, repo [here](https://github.com/anomalyco/opencode)
 - Plans projects from specs before writing code
 - Presents tradeoffs, waits for user decisions
 - Follows TDD — failing tests first, then implementation
@@ -312,7 +314,7 @@ layout: two-cols-header
 
 # Demo: AI Plans, Then Asks Before Acting
 
-A real project built entirely inside CBorg Studio: predicting US domestic flight delays (454k flights, 2023 data, XGBoost).
+A real [project](https://github.com/tyfong-lbl/flight_delay_demo/) built entirely inside CBorg Studio: predicting US domestic flight delays (454k flights, 2023 data, XGBoost).
 
 ::left::
 
@@ -641,8 +643,11 @@ Futher work -- setting up separate agent instance for judging the output of code
 
 Resources referenced in this presentation:
 
+- lakeFS: https://lakefs.io/ —  *lakeFS: Git for Data*
+- Demo Repo: https://github.com/tyfong-lbl/flight_delay_demo/ — *Demo: AI Plans, Then Asks Before Acting*
+- Opencode: https://github.com/anomalyco/opencode — *OpenCode: The AI Coding Agent* 
 - Superpowers: https://github.com/obra/superpowers — *OpenCode: The AI Coding Agent*
-- learning-opportunities: https://github.com/DrCatHicks/learning-opportunities) — *OpenCode: The AI Coding Agent*
+- learning-opportunities: https://github.com/DrCatHicks/learning-opportunities — *OpenCode: The AI Coding Agent*
 - private-journal-mcp: https://github.com/obra/private-journal-mcp  — *Demo: Persistent Memory Across Sessions*
 
 ---
